@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 碗 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M30,52 L78,52 C78,66 68,76 54,76 C40,76 30,66 30,52 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M44,78 L64,78 L62,82 L46,82 Z" />
+    <!-- 筷子 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M60,48 L74,26 L77,28 L64,49 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M66,49 L82,30 L84,32 L70,50 Z" />
+    <!-- 热气 -->
+    <path
+        android:fillColor="#FFE0D1"
+        android:pathData="M42,46 C38,42 46,38 42,32 L45,31 C49,37 41,41 45,45 Z" />
+    <path
+        android:fillColor="#FFE0D1"
+        android:pathData="M52,46 C48,42 56,38 52,32 L55,31 C59,37 51,41 55,45 Z" />
+</vector>
