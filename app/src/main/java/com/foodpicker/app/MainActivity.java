@@ -22,14 +22,10 @@ import android.widget.Toast;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.io.ByteArrayOutputStream;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
+import java.io.File;
+import java.io.FileInputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.FutureTask;
 
@@ -90,6 +86,29 @@ public class MainActivity extends Activity {
         notifyShare();
     }
 
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // 采集会话已结束（或进程被杀过）但结果还没导入：交给网页
+        if (!AutoCollectService.sessionActive && takeCollectResult()) notifyShare();
+    }
+
+    /** 读出自动采集的识别结果（已整理成导入格式的文字），读完删除文件 */
+    private boolean takeCollectResult() {
+        File f = AutoCollectService.resultFile(this);
+        if (!f.exists()) return false;
+        try {
+            String text = new String(Ai.readBytes(new FileInputStream(f)), StandardCharsets.UTF_8).trim();
+            //noinspection ResultOfMethodCallIgnored
+            f.delete();
+            if (text.isEmpty()) return false;
+            pendingShare = new JSONObject().put("text", text).put("auto", true).toString();
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     private void notifyShare() {
         if (pendingShare != null) webView.evaluateJavascript("window.onShared && onShared()", null);
     }
@@ -99,17 +118,8 @@ public class MainActivity extends Activity {
     private void handleShare(Intent intent) {
         if (intent == null) return;
         if (intent.getBooleanExtra(EXTRA_COLLECTED, false)) {
-            // 自动采集服务截好的图
             intent.removeExtra(EXTRA_COLLECTED);
-            try {
-                JSONArray images = new JSONArray();
-                synchronized (AutoCollectService.collected) {
-                    for (String s : AutoCollectService.collected) images.put(s);
-                    AutoCollectService.collected.clear();
-                }
-                if (images.length() > 0) pendingShare = new JSONObject().put("images", images).put("auto", true).toString();
-            } catch (Exception ignored) {
-            }
+            takeCollectResult();
             return;
         }
         String action = intent.getAction();
@@ -133,7 +143,7 @@ public class MainActivity extends Activity {
                 JSONArray images = new JSONArray();
                 for (Uri u : uris) {
                     String mime = getContentResolver().getType(u);
-                    byte[] bytes = readBytes(getContentResolver().openInputStream(u));
+                    byte[] bytes = Ai.readBytes(getContentResolver().openInputStream(u));
                     images.put("data:" + (mime == null ? "image/jpeg" : mime) + ";base64," + Base64.encodeToString(bytes, Base64.NO_WRAP));
                 }
                 if (images.length() == 0) return;
@@ -213,11 +223,11 @@ public class MainActivity extends Activity {
                     Uri.parse("package:" + getPackageName()))));
         }
 
-        /** 显示悬浮按钮并打开微信 */
+        /** 显示悬浮面板并打开微信；config 为 AI 配置和提示词（JSON） */
         @JavascriptInterface
-        public boolean startAutoCollect() {
+        public boolean startAutoCollect(String config) {
             Intent wx = getPackageManager().getLaunchIntentForPackage("com.tencent.mm");
-            AutoCollectService.arm();
+            AutoCollectService.arm(config);
             if (wx == null) return false;
             runOnUiThread(() -> startActivity(wx));
             return true;
@@ -265,49 +275,19 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void post(String id, String url, String headersJson, String body) {
             new Thread(() -> {
-                int status = 0;
+                int status;
                 String text;
-                HttpURLConnection conn = null;
                 try {
-                    conn = (HttpURLConnection) new URL(url).openConnection();
-                    conn.setRequestMethod("POST");
-                    conn.setConnectTimeout(20000);
-                    conn.setReadTimeout(180000);
-                    conn.setDoOutput(true);
-                    JSONObject headers = new JSONObject(headersJson);
-                    Iterator<String> keys = headers.keys();
-                    while (keys.hasNext()) {
-                        String k = keys.next();
-                        conn.setRequestProperty(k, headers.getString(k));
-                    }
-                    try (OutputStream os = conn.getOutputStream()) {
-                        os.write(body.getBytes(StandardCharsets.UTF_8));
-                    }
-                    status = conn.getResponseCode();
-                    InputStream is = status >= 400 ? conn.getErrorStream() : conn.getInputStream();
-                    text = is == null ? "" : readAll(is);
+                    Object[] r = Ai.post(url, new JSONObject(headersJson), body);
+                    status = (Integer) r[0];
+                    text = (String) r[1];
                 } catch (Exception e) {
-                    text = String.valueOf(e.getMessage() != null ? e.getMessage() : e);
-                } finally {
-                    if (conn != null) conn.disconnect();
+                    status = 0;
+                    text = String.valueOf(e.getMessage());
                 }
                 String js = "window.__httpCb(" + JSONObject.quote(id) + "," + status + "," + JSONObject.quote(text) + ")";
                 runOnUiThread(() -> webView.evaluateJavascript(js, null));
             }).start();
-        }
-    }
-
-    private static String readAll(InputStream is) throws Exception {
-        return new String(readBytes(is), StandardCharsets.UTF_8);
-    }
-
-    private static byte[] readBytes(InputStream is) throws Exception {
-        try (InputStream in = is) {
-            ByteArrayOutputStream out = new ByteArrayOutputStream();
-            byte[] buf = new byte[8192];
-            int n;
-            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
-            return out.toByteArray();
         }
     }
 }

@@ -712,7 +712,7 @@
     var raw = window.Android && Android.takeShared ? Android.takeShared() : null;
     if (!raw) return;
     var sh; try { sh = JSON.parse(raw); } catch (e) { return; }
-    if (sh.text) openImport(sh.text);
+    if (sh.text) { openImport(sh.text); if (sh.auto) toast('自动采集完成，检查后点「导入」'); }
     else if (sh.images && sh.images.length) aiSheet(sh.images);
   };
 
@@ -720,21 +720,25 @@
   var AI_KEY = 'food_picker_ai';
   var PROVIDERS = {
     claude: { name: 'Claude（Anthropic）', fmt: 'anthropic', url: 'https://api.anthropic.com/v1/messages', model: 'claude-opus-5-5', perReq: 10, keyHint: 'sk-ant-…，在 console.anthropic.com 获取' },
-    qwen: { name: '通义千问（阿里云百炼）', fmt: 'openai', url: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', model: 'qwen-vl-max', perReq: 6, keyHint: 'sk-…，在 bailian.console.aliyun.com 获取' },
-    zhipu: { name: '智谱 GLM（glm-4v-flash 免费）', fmt: 'openai', url: 'https://open.bigmodel.cn/api/paas/v4/chat/completions', model: 'glm-4v-flash', perReq: 1, keyHint: '在 open.bigmodel.cn 获取' },
+    qwen: { name: '通义千问（阿里云百炼）', fmt: 'openai', url: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', model: 'qwen-vl-max', textModel: 'qwen-plus', perReq: 6, keyHint: 'sk-…，在 bailian.console.aliyun.com 获取' },
+    zhipu: { name: '智谱 GLM（glm-4v-flash 免费）', fmt: 'openai', url: 'https://open.bigmodel.cn/api/paas/v4/chat/completions', model: 'glm-4v-flash', textModel: 'glm-4-flash', perReq: 1, keyHint: '在 open.bigmodel.cn 获取' },
     custom: { name: '自定义（OpenAI 兼容接口）', fmt: 'openai', url: '', model: '', perReq: 4, keyHint: 'Bearer Token' }
   };
-  var AI_PROMPT = '任务：从这些外卖菜单截图中提取「店铺名、菜品名、价格」，只要这三样。\n\n' +
-    '输出格式（纯文本，不要代码块、不要表格、不要任何解释或开场白）：\n' +
+  // 截图识别和读屏文字识别共用同一套输出规则
+  var AI_RULES = '输出格式（纯文本，不要代码块、不要表格、不要任何解释或开场白）：\n' +
     '【店铺名】\n菜品名 价格\n菜品名 价格\n\n' +
     '规则：\n' +
-    '1. 店铺名写在【】里单独一行；图中看不到店铺名就写【未命名店铺】；多家店铺分成多段。\n' +
-    '2. 每道菜一行：菜品名 + 一个空格 + 价格。价格只写阿拉伯数字（如 18 或 18.5），不带 ¥、元。\n' +
-    '3. 价格取实际要付的价格：有折扣价/活动价时取折扣价，不要原价；有多个规格时取最便宜的那个。看不清价格就只写菜品名。\n' +
-    '4. 菜品名照抄图中文字，去掉其中的空格；不要附加规格、描述、销量、评分、"招牌""推荐"等标签。\n' +
-    '5. 同一道菜在多张图里重复出现只写一次。\n' +
-    '6. 不要输出分类标题、配送费、起送价、包装费、满减、优惠券、店铺公告等任何非菜品内容。\n\n' +
+    '1. 店铺名写在【】里单独一行；看不出店铺名就写【未命名店铺】；多家店铺分成多段。\n' +
+    '2. 每道菜一行：菜品名 + 一个空格 + 价格。价格只写阿拉伯数字（如 18 或 18.5），不带 ¥、元、起。\n' +
+    '3. 价格取实际要付的价格：同时有现价和划线原价（如「¥9.9起 ¥14.9」）时取现价 9.9；有多个规格时取最便宜的那个。看不清价格就只写菜品名。\n' +
+    '4. 菜品名照抄原文，去掉其中的空格；不要附加规格、描述、折扣（如 6.6折）、销量、评分、"招牌""推荐"等标签。\n' +
+    '5. 同一道菜重复出现只写一次。\n' +
+    '6. 不要输出分类标题、配送费、起送价、包装费、满减、优惠券、店铺公告、购物车金额等任何非菜品内容。\n\n' +
     '示例：\n【老王黄焖鸡】\n黄焖鸡米饭 18\n黄焖排骨饭 22.5\n可乐 3';
+  var AI_PROMPT = '任务：从这些外卖菜单截图中提取「店铺名、菜品名、价格」，只要这三样。\n\n' + AI_RULES;
+  var TEXT_PROMPT = '任务：下面是从外卖小程序店铺页面上逐屏读出的文字，按屏幕从上到下的顺序排列，' +
+    '夹杂着按钮文字（选规格、+）、折扣、销量、分类名等噪音，前后可能有少量重复。从中提取「店铺名、菜品名、价格」，只要这三样。' +
+    '一般是菜品名在前、它的价格紧跟在后面几行。\n\n' + AI_RULES;
 
   function aiCfg() {
     var c = {};
@@ -913,7 +917,11 @@
       ready: '<b style="color:var(--ok)">无障碍已开启，可以开始</b>'
     }[st];
     openSheet('<h2>🤖 自动采集菜单</h2>' +
-      '<p class="muted">App 会在微信里显示一个悬浮按钮。你打开小程序的点餐页、点「开始采集」后，它会自动往下滑、逐屏截图，滑到底自动回来，用 AI 识别店铺、菜品和价格。只读屏幕和滑动，不会点击或下单。</p>' +
+      '<p class="muted">App 会在微信里显示一个悬浮面板，边采集边识别：</p>' +
+      '<pre class="hint">· 自动逐店：停在小程序首页的店铺列表，点「自动逐店」。它会逐个点进店铺、滑到底、返回，再进下一家，列表到底自动结束\n' +
+      '· 采集本店：自己进一家店，点「采集本店」，滑到底自动返回\n' +
+      '· 全部采完点「完成」，等识别收尾后回到这里一键导入\n\n' +
+      '优先直接读页面上的文字（快、省钱），读不到才截图。只会点店铺名，不会点加购或下单。</pre>' +
       '<div class="field">状态：' + status + '</div>' +
       (st === 'disabled' ?
         '<pre class="hint">1. 点下面「去开启」，在「已下载的应用 / 已安装的服务」里找到「今天吃什么 · 自动采集菜单」，打开开关\n' +
@@ -921,8 +929,8 @@
         '<div class="row" style="margin-bottom:12px"><button class="btn primary" id="ac-settings">去开启</button><button class="btn" id="ac-info">应用信息</button></div>' : '') +
       '<div class="field"><label>小程序链接（复制后发到微信「文件传输助手」，点一下就能打开）</label>' +
       '<div class="row"><input id="ac-link" value="' + esc(savedLink()) + '"><button class="btn" id="ac-copy" style="flex:none">复制</button></div></div>' +
-      '<p class="muted">采集到的截图会发给「AI 设置」里的服务商识别' + (aiCfg().key ? '' : '，<b style="color:var(--danger)">你还没填 API Key</b>') + '。微信不允许第三方自动化操作，频繁使用可能有账号风险，请适度使用。</p>' +
-      '<div class="row"><button class="btn" id="ac-cancel">关闭</button><button class="btn primary" id="ac-go"' + (st === 'ready' ? '' : ' disabled') + '>打开微信开始</button></div>');
+      '<p class="muted">读到的文字/截图会发给「AI 设置」里的服务商识别' + (aiCfg().key ? '' : '，<b style="color:var(--danger)">你还没填 API Key，先去「AI 识别 → AI 设置」填好</b>') + '。微信不允许第三方自动化操作，频繁使用可能有账号风险，请适度使用。</p>' +
+      '<div class="row"><button class="btn" id="ac-cancel">关闭</button><button class="btn primary" id="ac-go"' + (st === 'ready' && aiCfg().key ? '' : ' disabled') + '>打开微信开始</button></div>');
     $('ac-cancel').onclick = closeSheet;
     $('ac-copy').onclick = function () {
       var v = $('ac-link').value.trim(); try { localStorage.setItem(LINK_KEY, v); } catch (e) {}
@@ -935,7 +943,10 @@
     $('ac-go').onclick = function () {
       try { localStorage.setItem(LINK_KEY, $('ac-link').value.trim()); } catch (e) {}
       closeSheet();
-      if (!Android.startAutoCollect()) toast('没找到微信。悬浮按钮已打开，可以手动切到要采集的 App');
+      var c = aiCfg(), p = PROVIDERS[c.provider];
+      var cfg = { fmt: p.fmt, url: c.url, key: c.key, model: c.model, textModel: c.provider === 'custom' ? c.model : (p.textModel || c.model),
+        perReq: p.perReq || 4, imagePrompt: AI_PROMPT, textPrompt: TEXT_PROMPT };
+      if (!Android.startAutoCollect(JSON.stringify(cfg))) toast('没找到微信。悬浮面板已打开，可以手动切到要采集的 App');
     };
   }
   $('btn-collect').onclick = collectSheet;
