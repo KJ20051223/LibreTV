@@ -26,6 +26,9 @@ import android.view.View;
 import android.view.WindowManager;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
+import android.view.accessibility.AccessibilityWindowInfo;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -76,7 +79,10 @@ public class AutoCollectService extends AccessibilityService {
     private static final int MAX_INFLIGHT = 4;
     private static final Pattern PRICE = Pattern.compile("(?:[¥￥]\\s*\\d{1,4}(?:\\.\\d{1,2})?)|(?:^\\d{1,4}(?:\\.\\d{1,2})?\\s*元?$)");
     private static final Pattern SHOP = Pattern.compile("【(.+?)】");
-    private static final Pattern SALES = Pattern.compile("^(月售|销量|已售)\\s*\\d+");
+    private static final Pattern SALES = Pattern.compile("(月售|销量|已售)\\s*\\d+");
+    /** 整张店铺卡片被读成一段时（「润园三楼至尊披萨 4.6 销量1022 …」），取评分/销量前面的部分当店名 */
+    private static final Pattern BADGE = Pattern.compile("(\\s+(外卖|自取|堂食|到店|自提|新店|品牌))+$");
+    private static final Pattern CARD_NAME = Pattern.compile("^(.{2,30}?)\\s+(?:[★☆]?\\s*\\d\\.\\d|月售|销量|已售)");
     private static final Pattern RATING = Pattern.compile("^[★☆]?\\s*\\d(\\.\\d)?\\s*分?$");
 
     /** 屏幕上的一段文字和它的位置 */
@@ -102,6 +108,8 @@ public class AutoCollectService extends AccessibilityService {
     // 会话统计（主线程读写）
     private int shopsDone, dishes, failures, inflight;
     private String lastError;
+    /** 显示在面板上的提示（很多手机会屏蔽后台 App 的 Toast） */
+    private String notice;
     private boolean finishing;
 
     // 当前店铺（主线程读写）
@@ -194,6 +202,7 @@ public class AutoCollectService extends AccessibilityService {
         panel.setPadding((int) (4 * dp), (int) (4 * dp), (int) (4 * dp), (int) (4 * dp));
 
         mainBtn = pill(0xFFFF6B35, dp);
+        mainBtn.setMaxWidth((int) (280 * dp));
         autoBtn = pill(0x33FFFFFF, dp);
         doneBtn = pill(0x33FFFFFF, dp);
         doneBtn.setText("完成");
@@ -297,7 +306,7 @@ public class AutoCollectService extends AccessibilityService {
         } else if (auto) {
             mainBtn.setText("找下一家店… " + stats);
         } else {
-            mainBtn.setText("▶ 采集本店（" + stats + "）");
+            mainBtn.setText("▶ 采集本店（" + stats + "）" + (notice != null ? "\n⚠ " + notice : ""));
         }
         autoBtn.setText(auto ? "停止自动" : "自动逐店");
         autoBtn.setVisibility(finishing ? View.GONE : View.VISIBLE);
@@ -306,6 +315,7 @@ public class AutoCollectService extends AccessibilityService {
 
     private void onMain() {
         if (finishing || auto) return;
+        notice = null;
         if (running) {
             endShop(false);
             return;
@@ -342,8 +352,10 @@ public class AutoCollectService extends AccessibilityService {
         if (running) return;
         auto = true;
         listStill = 0;
+        notice = null;
         updateUi();
-        main.post(this::listStep);
+        // 稍等一下再读屏：刚点完悬浮面板时，系统认为「活动窗口」是面板本身
+        main.postDelayed(this::listStep, 600);
     }
 
     private void onDone() {
@@ -468,7 +480,8 @@ public class AutoCollectService extends AccessibilityService {
             main.postDelayed(this::listStep, 1500);
         } else if (reachedEnd && shopScreens > 0) {
             performGlobalAction(GLOBAL_ACTION_BACK);
-            Toast.makeText(this, "本店采完，已返回。进入下一家后点「采集本店」", Toast.LENGTH_SHORT).show();
+            notice = "本店采完已返回，进下一家后再点我";
+            updateUi();
         }
     }
 
@@ -484,7 +497,7 @@ public class AutoCollectService extends AccessibilityService {
         }
         List<TextNode> nodes = readNodes();
         if (nodes.isEmpty()) {
-            stopAuto("读不到页面文字，没法自动逐店。请手动进店后点「采集本店」");
+            stopAuto("读不到页面文字（微信没有开放这个页面的文字），只能手动进店后点「采集本店」，会改用截图");
             return;
         }
         DisplayMetrics dm = getResources().getDisplayMetrics();
@@ -502,7 +515,12 @@ public class AutoCollectService extends AccessibilityService {
             return;
         }
         if (!sawShop && visited.isEmpty()) {
-            stopAuto("这一页没找到店铺列表（店名后面要有「销量」）。请先回到首页的店铺列表");
+            if (++listStill <= 2) {   // 店铺列表在首页下方，先往下滑几屏找找
+                swipeList();
+                return;
+            }
+            copyDebug(nodes);
+            stopAuto("读到 " + nodes.size() + " 段文字，但没认出店铺。已把读到的文字复制到剪贴板，可以发给开发者");
             return;
         }
         if (++listStill > 3) {   // 连续几屏都没有新店：列表到底了
@@ -532,8 +550,20 @@ public class AutoCollectService extends AccessibilityService {
 
     private void stopAuto(String msg) {
         auto = false;
+        notice = msg;
         updateUi();
         Toast.makeText(this, msg, Toast.LENGTH_LONG).show();
+    }
+
+    /** 自动逐店认不出店铺时，把读到的文字放进剪贴板，方便发给开发者看 */
+    private void copyDebug(List<TextNode> nodes) {
+        StringBuilder sb = new StringBuilder("【自动逐店调试】读到 ").append(nodes.size()).append(" 段文字：\n");
+        for (int i = 0; i < nodes.size() && i < 200; i++) sb.append(nodes.get(i).text).append('\n');
+        try {
+            ClipboardManager cm = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+            cm.setPrimaryClip(ClipData.newPlainText("debug", sb.toString()));
+        } catch (Exception ignored) {
+        }
     }
 
     /**
@@ -544,11 +574,21 @@ public class AutoCollectService extends AccessibilityService {
         List<TextNode> out = new ArrayList<>();
         Set<String> seen = new HashSet<>();
         for (int i = 0; i < nodes.size(); i++) {
-            if (!SALES.matcher(nodes.get(i).text).find()) continue;
+            String cur = nodes.get(i).text;
+            if (!SALES.matcher(cur).find()) continue;
+            Matcher card = CARD_NAME.matcher(cur);
+            if (card.find()) {   // 整张卡片是一段文字
+                String name = BADGE.matcher(card.group(1).trim()).replaceAll("").trim();
+                if (seen.add(name)) out.add(new TextNode(name, nodes.get(i).rect));
+                continue;
+            }
             TextNode best = null;
+            Rect sr = nodes.get(i).rect;
+            int maxGap = Math.max(200, sr.height() * 5);   // 店名就在销量上面一两行
             for (int j = i - 1; j >= Math.max(0, i - 3); j--) {
                 String t = nodes.get(j).text;
                 if (RATING.matcher(t).matches() || SALES.matcher(t).find() || PRICE.matcher(t).find()) continue;
+                if (sr.top - nodes.get(j).rect.top > maxGap) continue;
                 if (best == null || t.length() > best.text.length()) best = nodes.get(j);
             }
             if (best != null && best.text.length() >= 2 && seen.add(best.text)) out.add(best);
@@ -657,12 +697,29 @@ public class AutoCollectService extends AccessibilityService {
         return texts(readNodes());
     }
 
+    /**
+     * 读当前屏幕上别的 App 的文字。不能只用 getRootInActiveWindow()：刚点过悬浮面板时，
+     * 「活动窗口」是面板自己。所以遍历所有窗口，跳过本 App，取最上层有文字的应用窗口。
+     */
     private List<TextNode> readNodes() {
         List<TextNode> out = new ArrayList<>();
+        try {
+            for (AccessibilityWindowInfo w : getWindows()) {
+                if (w.getType() != AccessibilityWindowInfo.TYPE_APPLICATION) continue;
+                AccessibilityNodeInfo root = w.getRoot();
+                if (root == null || isOurs(root)) continue;
+                collect(root, out, 0);
+                if (!out.isEmpty()) return out;
+            }
+        } catch (Exception ignored) {
+        }
         AccessibilityNodeInfo root = getRootInActiveWindow();
-        if (root == null || getPackageName().contentEquals(String.valueOf(root.getPackageName()))) return out;
-        collect(root, out, 0);
+        if (root != null && !isOurs(root)) collect(root, out, 0);
         return out;
+    }
+
+    private boolean isOurs(AccessibilityNodeInfo root) {
+        return getPackageName().contentEquals(String.valueOf(root.getPackageName()));
     }
 
     private static void collect(AccessibilityNodeInfo node, List<TextNode> out, int depth) {

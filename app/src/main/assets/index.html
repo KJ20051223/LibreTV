@@ -690,7 +690,7 @@
     readClipboard().then(function (t) {
       t = (t || '').trim();
       var seen = ''; try { seen = localStorage.getItem(CLIP_KEY) || ''; } catch (e) {}
-      if (!t || hash(t) === seen) return;
+      if (!t || hash(t) === seen || t.indexOf('【自动逐店调试】') === 0) return;
       var g = parseMenu(t), n = countDishes(g);
       // 至少 3 道菜且有店铺行或价格，才像菜单，避免普通文字误报
       if (n < 3 || !/【.+?】|\d/.test(t)) return;
