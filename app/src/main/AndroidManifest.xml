@@ -4,6 +4,11 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.VIBRATE" />
 
+    <!-- Android 11+ 需要声明才能打开微信 -->
+    <queries>
+        <package android:name="com.tencent.mm" />
+    </queries>
+
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
@@ -32,5 +37,18 @@
                 <data android:mimeType="image/*" />
             </intent-filter>
         </activity>
+
+        <service
+            android:name=".AutoCollectService"
+            android:exported="true"
+            android:label="@string/collect_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/collect_service" />
+        </service>
     </application>
 </manifest>

@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">今天吃什么</string>
+    <string name="collect_label">今天吃什么 · 自动采集菜单</string>
+    <string name="collect_desc">在外卖小程序的菜单页显示一个悬浮按钮。点「开始采集」后自动向下滑动并截图，到底后回到 App 用 AI 识别菜品。只读取屏幕和滑动，不会点击或下单；不用时可以在这里关闭。</string>
 </resources>

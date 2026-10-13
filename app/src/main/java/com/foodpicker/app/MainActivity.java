@@ -36,6 +36,7 @@ import java.util.concurrent.FutureTask;
 public class MainActivity extends Activity {
 
     private static final int REQ_FILE = 1;
+    static final String EXTRA_COLLECTED = "collected";
 
     private WebView webView;
     private ValueCallback<Uri[]> fileCallback;
@@ -97,6 +98,20 @@ public class MainActivity extends Activity {
     @SuppressWarnings("deprecation")
     private void handleShare(Intent intent) {
         if (intent == null) return;
+        if (intent.getBooleanExtra(EXTRA_COLLECTED, false)) {
+            // 自动采集服务截好的图
+            intent.removeExtra(EXTRA_COLLECTED);
+            try {
+                JSONArray images = new JSONArray();
+                synchronized (AutoCollectService.collected) {
+                    for (String s : AutoCollectService.collected) images.put(s);
+                    AutoCollectService.collected.clear();
+                }
+                if (images.length() > 0) pendingShare = new JSONObject().put("images", images).put("auto", true).toString();
+            } catch (Exception ignored) {
+            }
+            return;
+        }
         String action = intent.getAction();
         if (!Intent.ACTION_SEND.equals(action) && !Intent.ACTION_SEND_MULTIPLE.equals(action)) return;
         try {
@@ -177,6 +192,35 @@ public class MainActivity extends Activity {
                 cm.setPrimaryClip(ClipData.newPlainText("food-picker", text));
                 Toast.makeText(MainActivity.this, "已复制到剪贴板", Toast.LENGTH_SHORT).show();
             });
+        }
+
+        /** unsupported（低于 Android 11）/ disabled（无障碍没开）/ ready */
+        @JavascriptInterface
+        public String autoStatus() {
+            if (!AutoCollectService.isSupported()) return "unsupported";
+            return AutoCollectService.isEnabled(MainActivity.this) ? "ready" : "disabled";
+        }
+
+        @JavascriptInterface
+        public void openAccessibilitySettings() {
+            runOnUiThread(() -> startActivity(new Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)));
+        }
+
+        /** 打开本 App 的「应用信息」页（Android 13+ 侧载应用要先在这里「允许受限制的设置」） */
+        @JavascriptInterface
+        public void openAppInfo() {
+            runOnUiThread(() -> startActivity(new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.parse("package:" + getPackageName()))));
+        }
+
+        /** 显示悬浮按钮并打开微信 */
+        @JavascriptInterface
+        public boolean startAutoCollect() {
+            Intent wx = getPackageManager().getLaunchIntentForPackage("com.tencent.mm");
+            AutoCollectService.arm();
+            if (wx == null) return false;
+            runOnUiThread(() -> startActivity(wx));
+            return true;
         }
 
         @JavascriptInterface

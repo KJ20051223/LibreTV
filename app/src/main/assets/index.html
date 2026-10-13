@@ -154,8 +154,9 @@
   <!-- 菜单 -->
   <section class="page" id="page-menu">
     <div class="toolbar">
+      <button class="btn primary" id="btn-collect">🤖 自动采集</button>
       <button class="btn primary" id="btn-ai">📷 AI 识别</button>
-      <button class="btn primary" id="btn-import">📥 一键导入</button>
+      <button class="btn primary" id="btn-import">📥 导入</button>
     </div>
     <div class="toolbar">
       <button class="btn" id="btn-add-dish">＋ 菜品</button>
@@ -718,10 +719,10 @@
   // ---------- AI 识别菜单图片 ----------
   var AI_KEY = 'food_picker_ai';
   var PROVIDERS = {
-    claude: { name: 'Claude（Anthropic）', fmt: 'anthropic', url: 'https://api.anthropic.com/v1/messages', model: 'claude-opus-5-5', keyHint: 'sk-ant-…，在 console.anthropic.com 获取' },
-    qwen: { name: '通义千问（阿里云百炼）', fmt: 'openai', url: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', model: 'qwen-vl-max', keyHint: 'sk-…，在 bailian.console.aliyun.com 获取' },
-    zhipu: { name: '智谱 GLM（glm-4v-flash 免费）', fmt: 'openai', url: 'https://open.bigmodel.cn/api/paas/v4/chat/completions', model: 'glm-4v-flash', keyHint: '在 open.bigmodel.cn 获取' },
-    custom: { name: '自定义（OpenAI 兼容接口）', fmt: 'openai', url: '', model: '', keyHint: 'Bearer Token' }
+    claude: { name: 'Claude（Anthropic）', fmt: 'anthropic', url: 'https://api.anthropic.com/v1/messages', model: 'claude-opus-5-5', perReq: 10, keyHint: 'sk-ant-…，在 console.anthropic.com 获取' },
+    qwen: { name: '通义千问（阿里云百炼）', fmt: 'openai', url: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', model: 'qwen-vl-max', perReq: 6, keyHint: 'sk-…，在 bailian.console.aliyun.com 获取' },
+    zhipu: { name: '智谱 GLM（glm-4v-flash 免费）', fmt: 'openai', url: 'https://open.bigmodel.cn/api/paas/v4/chat/completions', model: 'glm-4v-flash', perReq: 1, keyHint: '在 open.bigmodel.cn 获取' },
+    custom: { name: '自定义（OpenAI 兼容接口）', fmt: 'openai', url: '', model: '', perReq: 4, keyHint: 'Bearer Token' }
   };
   var AI_PROMPT = '任务：从这些外卖菜单截图中提取「店铺名、菜品名、价格」，只要这三样。\n\n' +
     '输出格式（纯文本，不要代码块、不要表格、不要任何解释或开场白）：\n' +
@@ -771,7 +772,7 @@
         var isUrl = typeof f === 'string', url = isUrl ? f : URL.createObjectURL(f), img = new Image();
         img.onload = function () {
           var out = [], w = img.naturalWidth, h = img.naturalHeight;
-          var scale = Math.min(1, 1280 / w), sliceH = Math.round(w * 2);
+          var scale = Math.min(1, 1280 / w), sliceH = h <= w * 2.4 ? h : Math.round(w * 2);
           for (var y = 0; y < h; y += sliceH) {
             var sh = Math.min(sliceH, h - y), cv = document.createElement('canvas');
             cv.width = Math.round(w * scale); cv.height = Math.round(sh * scale);
@@ -809,11 +810,11 @@
     });
   }
 
-  function recognize(images) {
-    var c = aiCfg(), fmt = PROVIDERS[c.provider].fmt;
+  function recognize(images, hint) {
+    var c = aiCfg(), fmt = PROVIDERS[c.provider].fmt, prompt = (hint ? hint + '\n\n' : '') + AI_PROMPT;
     if (fmt === 'anthropic') {
       var content = images.map(function (d) { return { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: d.split(',')[1] } }; });
-      content.push({ type: 'text', text: AI_PROMPT });
+      content.push({ type: 'text', text: prompt });
       return httpPost(c.url, {
         'content-type': 'application/json', 'x-api-key': c.key, 'anthropic-version': '2023-06-01',
         'anthropic-beta': 'server-side-fallback-2026-07-01'
@@ -824,7 +825,7 @@
         });
     }
     var parts = images.map(function (d) { return { type: 'image_url', image_url: { url: d } }; });
-    parts.push({ type: 'text', text: AI_PROMPT });
+    parts.push({ type: 'text', text: prompt });
     return httpPost(c.url, { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + c.key },
       { model: c.model, messages: [{ role: 'user', content: parts }] })
       .then(function (j) {
@@ -834,6 +835,27 @@
         if (!t) throw new Error('模型没有返回内容');
         return t;
       });
+  }
+
+  // 图多时分批识别：先识别第一批拿到店铺名，其余批次带上店铺名、两路并发
+  function recognizeAll(images, onProgress) {
+    var per = PROVIDERS[aiCfg().provider].perReq || 4, chunks = [];
+    for (var i = 0; i < images.length; i += per) chunks.push(images.slice(i, i + per));
+    var out = new Array(chunks.length), done = 0, failed = 0, lastErr = null, hint = '';
+    function run(i) {
+      return recognize(chunks[i], hint).then(function (t) { out[i] = t; }, function (e) { failed++; lastErr = e; })
+        .then(function () { done++; onProgress(done, chunks.length); });
+    }
+    return run(0).then(function () {
+      var m = (out[0] || '').match(/【(.+?)】/);
+      if (m && m[1] !== '未命名店铺') hint = '这些截图和前面的截图来自同一家店的同一份菜单，店铺名统一写【' + m[1] + '】。';
+      var next = 1;
+      function worker() { if (next >= chunks.length) return Promise.resolve(); return run(next++).then(worker); }
+      return Promise.all([worker(), worker()]);
+    }).then(function () {
+      if (failed === chunks.length) throw lastErr;
+      return { text: out.filter(Boolean).join('\n'), failed: failed, total: chunks.length };
+    });
   }
 
   function aiSheet(preload) {
@@ -854,22 +876,23 @@
     function useFiles(files, autoStart) {
       $('ai-go').disabled = true; $('ai-thumbs').textContent = '处理中…';
       loadImages(files).then(function (list) {
-        images = list.slice(0, 20);
+        images = list.slice(0, 40);
         $('ai-thumbs').innerHTML = images.map(function (d) { return '<img src="' + d + '">'; }).join('') +
-          (list.length > 20 ? '<div class="muted">图片太多，只取前 20 张</div>' : '');
+          (list.length > 40 ? '<div class="muted">图片太多，只取前 40 张</div>' : '');
         $('ai-go').disabled = false;
         if (autoStart && aiCfg().key) $('ai-go').click();
       }).catch(function (e) { $('ai-thumbs').textContent = e.message; });
     }
     $('ai-files').onchange = function () { if (this.files.length) useFiles(this.files); };
     if (preload) useFiles(preload, true);
+    if (preload && !c.key) toast('截图已收到。先在「AI 设置」填好 API Key，再点「开始识别」');
     $('ai-go').onclick = function () {
       if (!aiCfg().key) { toast('请先在「AI 设置」里填写 API Key'); return; }
       if (!images.length) return;
       var btn = this; btn.disabled = true; btn.innerHTML = '<span class="spin"></span>识别中…';
-      recognize(images).then(function (text) {
-        openImport(text.trim());
-        toast('识别完成，检查无误后点「导入」');
+      recognizeAll(images, function (d, n) { if (n > 1) btn.innerHTML = '<span class="spin"></span>识别中 ' + d + '/' + n + '…'; }).then(function (r) {
+        openImport(r.text.trim());
+        toast(r.failed ? '有 ' + r.failed + '/' + r.total + ' 批识别失败，结果可能不全' : '识别完成，检查无误后点「导入」');
       }).catch(function (e) {
         btn.disabled = false; btn.textContent = '开始识别';
         alert('识别失败：' + e.message);
@@ -877,6 +900,49 @@
     };
   }
   $('btn-ai').onclick = function () { aiSheet(); };
+
+  // ---------- 自动采集 ----------
+  var LINK_KEY = 'food_picker_link';
+  function savedLink() { try { return localStorage.getItem(LINK_KEY) || '#小程序://扫贝外卖/KUzavzvYVtG0BzJ'; } catch (e) { return ''; } }
+  function collectSheet() {
+    var st = window.Android && Android.autoStatus ? Android.autoStatus() : 'web';
+    var status = {
+      web: '<b style="color:var(--danger)">只能在安卓 App 里使用</b>',
+      unsupported: '<b style="color:var(--danger)">需要 Android 11 及以上，你的手机版本太低</b>',
+      disabled: '<b style="color:var(--danger)">还没开启无障碍权限</b>',
+      ready: '<b style="color:var(--ok)">无障碍已开启，可以开始</b>'
+    }[st];
+    openSheet('<h2>🤖 自动采集菜单</h2>' +
+      '<p class="muted">App 会在微信里显示一个悬浮按钮。你打开小程序的点餐页、点「开始采集」后，它会自动往下滑、逐屏截图，滑到底自动回来，用 AI 识别店铺、菜品和价格。只读屏幕和滑动，不会点击或下单。</p>' +
+      '<div class="field">状态：' + status + '</div>' +
+      (st === 'disabled' ?
+        '<pre class="hint">1. 点下面「去开启」，在「已下载的应用 / 已安装的服务」里找到「今天吃什么 · 自动采集菜单」，打开开关\n' +
+        '2. 如果开关是灰色的（Android 13+ 自己安装的 App 会这样）：点「应用信息」→ 右上角 ⋮ →「允许受限制的设置」，再回来开</pre>' +
+        '<div class="row" style="margin-bottom:12px"><button class="btn primary" id="ac-settings">去开启</button><button class="btn" id="ac-info">应用信息</button></div>' : '') +
+      '<div class="field"><label>小程序链接（复制后发到微信「文件传输助手」，点一下就能打开）</label>' +
+      '<div class="row"><input id="ac-link" value="' + esc(savedLink()) + '"><button class="btn" id="ac-copy" style="flex:none">复制</button></div></div>' +
+      '<p class="muted">采集到的截图会发给「AI 设置」里的服务商识别' + (aiCfg().key ? '' : '，<b style="color:var(--danger)">你还没填 API Key</b>') + '。微信不允许第三方自动化操作，频繁使用可能有账号风险，请适度使用。</p>' +
+      '<div class="row"><button class="btn" id="ac-cancel">关闭</button><button class="btn primary" id="ac-go"' + (st === 'ready' ? '' : ' disabled') + '>打开微信开始</button></div>');
+    $('ac-cancel').onclick = closeSheet;
+    $('ac-copy').onclick = function () {
+      var v = $('ac-link').value.trim(); try { localStorage.setItem(LINK_KEY, v); } catch (e) {}
+      copyText(v);
+    };
+    if ($('ac-settings')) {
+      $('ac-settings').onclick = function () { Android.openAccessibilitySettings(); };
+      $('ac-info').onclick = function () { Android.openAppInfo(); };
+    }
+    $('ac-go').onclick = function () {
+      try { localStorage.setItem(LINK_KEY, $('ac-link').value.trim()); } catch (e) {}
+      closeSheet();
+      if (!Android.startAutoCollect()) toast('没找到微信。悬浮按钮已打开，可以手动切到要采集的 App');
+    };
+  }
+  $('btn-collect').onclick = collectSheet;
+  // 从设置页开完无障碍回来时，刷新状态
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden && $('mask').classList.contains('show') && $('ac-go')) collectSheet();
+  });
 
   $('btn-backup').onclick = function () {
     openSheet('<h2>备份 / 恢复</h2>' +
