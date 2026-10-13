@@ -8,6 +8,7 @@
   :root {
     --primary: #ff6b35; --primary-dark: #e85a2a; --bg: #fff8f3; --card: #fff;
     --text: #2b2118; --muted: #8a7a6d; --line: #f0e4da; --ok: #2fa36b; --danger: #e5484d;
+    --ease-out: cubic-bezier(0.23, 1, 0.32, 1); --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
   }
   [hidden] { display: none !important; }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -18,38 +19,31 @@
   nav { position: fixed; bottom: 0; left: 0; right: 0; display: flex; background: #fff; border-top: 1px solid var(--line); }
   nav button { flex: 1; border: 0; background: none; padding: 10px 0 12px; font-size: 13px; color: var(--muted); }
   nav button b { display: block; font-size: 20px; font-weight: normal; }
-  nav button { transition: color .2s; }
   nav button.active { color: var(--primary); }
-  nav button.active b { animation: navpop .35s cubic-bezier(.2,1.8,.4,1); }
-  @keyframes navpop { 0% { transform: scale(.7); } 100% { transform: none; } }
-  .page { display: none; } .page.active { display: block; animation: pagein .28s ease-out; }
-  @keyframes pagein { from { opacity: 0; transform: translateY(10px); } }
-  .page.enter .card { animation: cardin .35s ease-out backwards; }
-  .page.enter .card:nth-child(2) { animation-delay: .04s; } .page.enter .card:nth-child(3) { animation-delay: .08s; }
-  .page.enter .card:nth-child(4) { animation-delay: .12s; } .page.enter .card:nth-child(n+5) { animation-delay: .16s; }
-  @keyframes cardin { from { opacity: 0; transform: translateY(14px); } }
+  .page { display: none; } .page.active { display: block; }
   .card { background: var(--card); border-radius: 14px; padding: 16px; margin-bottom: 14px; box-shadow: 0 1px 3px rgba(0,0,0,.05); }
   /* 转盘 */
   .wheel-wrap { position: relative; width: min(100%, 340px); aspect-ratio: 1; margin: 4px auto 0; }
-  .wheel-wrap canvas { width: 100%; height: 100%; display: block; filter: drop-shadow(0 8px 18px rgba(232,90,42,.25)); }
-  .pointer { position: absolute; left: 50%; top: -6px; width: 30px; height: 40px; margin-left: -15px; transform-origin: 50% 8px; z-index: 2; filter: drop-shadow(0 2px 3px rgba(0,0,0,.25)); }
-  .pointer.tick { animation: tick .12s ease-out; }
-  @keyframes tick { 40% { transform: rotate(-22deg); } }
+  .wheel-disc { width: 100%; height: 100%; border-radius: 50%; box-shadow: 0 8px 24px rgba(232,90,42,.25); }
+  .wheel-disc canvas { width: 100%; height: 100%; display: block; will-change: transform; }
+  .pointer { position: absolute; left: 50%; top: -6px; width: 30px; height: 40px; margin-left: -15px; transform-origin: 50% 12px; z-index: 2; filter: drop-shadow(0 2px 3px rgba(0,0,0,.25)); will-change: transform; }
   .hub { position: absolute; left: 50%; top: 50%; width: 27%; height: 27%; transform: translate(-50%,-50%); border-radius: 50%; border: 4px solid #fff;
     background: radial-gradient(circle at 35% 30%, #ff9a6b, var(--primary) 60%, var(--primary-dark)); color: #fff; font-size: 20px; font-weight: 700;
-    box-shadow: 0 4px 14px rgba(232,90,42,.45); transition: transform .15s; z-index: 3; }
-  .hub:active { transform: translate(-50%,-50%) scale(.92); }
+    box-shadow: 0 4px 14px rgba(232,90,42,.45); transition: transform 160ms var(--ease-out); z-index: 3; }
+  .hub:active { transform: translate(-50%,-50%) scale(.97); }
   .hub:disabled { opacity: 1; }
-  .hub.idle { animation: breathe 2.4s ease-in-out infinite; }
-  @keyframes breathe { 50% { box-shadow: 0 4px 22px rgba(232,90,42,.7), 0 0 0 8px rgba(255,107,53,.12); } }
+  /* 空闲时外圈一道光环向外扩散，提示可以点；只动 transform/opacity */
+  .hub::after { content: ''; position: absolute; inset: -4px; border-radius: 50%; border: 3px solid var(--primary); opacity: 0; pointer-events: none; }
+  .hub.idle::after { animation: ring 2.4s var(--ease-out) infinite; }
+  @keyframes ring { 0% { transform: scale(1); opacity: .55; } 70%, 100% { transform: scale(1.35); opacity: 0; } }
   .result { text-align: center; padding: 18px 16px; margin-top: 16px; }
   .result .name { font-size: 26px; font-weight: 700; min-height: 39px; word-break: break-all; }
   .result .meta { color: var(--muted); margin-top: 4px; min-height: 22px; }
-  .result.pop { animation: pop .5s cubic-bezier(.2,1.6,.4,1); }
-  @keyframes pop { 0% { transform: scale(.85); opacity: .3; } 100% { transform: none; opacity: 1; } }
+  .result.pop { animation: pop 300ms var(--ease-out); }
+  @keyframes pop { from { transform: scale(.95); opacity: 0; } }
   #confetti { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 30; }
-  .btn { border: 0; border-radius: 10px; padding: 10px 16px; font-size: 15px; background: var(--line); color: var(--text); transition: transform .12s, opacity .2s; }
-  .btn:active { transform: scale(.95); }
+  .btn { border: 0; border-radius: 10px; padding: 10px 16px; font-size: 15px; background: var(--line); color: var(--text); transition: transform 160ms var(--ease-out); }
+  .btn:active { transform: scale(.97); }
   .btn.primary { background: var(--primary); color: #fff; }
   .btn.ok { background: var(--ok); color: #fff; }
   .btn.danger { background: var(--danger); color: #fff; }
@@ -77,18 +71,27 @@
   .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
   .toolbar .btn { flex: 1; white-space: nowrap; }
   .mask { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: flex; align-items: flex-end; z-index: 10;
-    opacity: 0; visibility: hidden; transition: opacity .25s, visibility 0s .25s; }
-  .mask.show { opacity: 1; visibility: visible; transition: opacity .25s; }
+    opacity: 0; visibility: hidden; transition: opacity 200ms var(--ease-out), visibility 0s 200ms; }
+  .mask.show { opacity: 1; visibility: visible; transition: opacity 250ms var(--ease-out); }
   .sheet { background: #fff; width: 100%; max-height: 90%; overflow: auto; border-radius: 16px 16px 0 0; padding: 18px 16px 24px;
-    transform: translateY(100%); transition: transform .3s cubic-bezier(.2,.9,.3,1); }
+    transform: translateY(100%); transition: transform 200ms var(--ease-out); }
+  .mask.show .sheet { transition: transform 320ms var(--ease-drawer); }
   .mask.show .sheet { transform: none; }
   .sheet h2 { margin: 0 0 14px; font-size: 18px; }
   .hist { display: flex; justify-content: space-between; padding: 10px 0; border-top: 1px solid var(--line); }
   .hist:first-child { border-top: 0; }
   .toast { position: fixed; left: 50%; bottom: 100px; transform: translateX(-50%); background: rgba(0,0,0,.75); color: #fff; padding: 8px 16px; border-radius: 20px; font-size: 14px; z-index: 20;
-    opacity: 0; visibility: hidden; transition: opacity .2s, transform .2s, visibility 0s .2s; transform: translate(-50%, 10px); }
-  .toast.show { opacity: 1; visibility: visible; transform: translate(-50%, 0); transition: opacity .2s, transform .2s; }
-  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
+    opacity: 0; visibility: hidden; transition: opacity 150ms var(--ease-out), transform 150ms var(--ease-out), visibility 0s 150ms; transform: translate(-50%, 8px); }
+  .toast.show { opacity: 1; visibility: visible; transform: translate(-50%, 0); transition: opacity 200ms var(--ease-out), transform 200ms var(--ease-out); }
+  /* 减少动画：保留透明度变化，去掉位移和缩放 */
+  @media (prefers-reduced-motion: reduce) {
+    .sheet, .mask.show .sheet { transform: none !important; }
+    .mask .sheet { opacity: 0; transition: opacity 200ms; } .mask.show .sheet { opacity: 1; }
+    .toast, .toast.show { transform: translate(-50%, 0); }
+    .btn:active, .hub:active { transform: none; } .hub:active { transform: translate(-50%,-50%); }
+    .hub.idle::after { animation: none; }
+    @keyframes pop { from { opacity: 0; } }
+  }
   .thumbs { display: flex; gap: 6px; flex-wrap: wrap; margin: 10px 0; }
   .thumbs img { width: 64px; height: 64px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); }
   .spin { display: inline-block; width: 16px; height: 16px; border: 2px solid #fff; border-right-color: transparent; border-radius: 50%; animation: sp .8s linear infinite; vertical-align: -3px; margin-right: 6px; }
@@ -104,7 +107,7 @@
   <section class="page active" id="page-pick">
     <div class="wheel-wrap">
       <svg class="pointer" id="pointer" viewBox="0 0 30 40"><path d="M15 40 L3 10 A12 12 0 1 1 27 10 Z" fill="#2b2118"/><circle cx="15" cy="12" r="5" fill="#fff"/></svg>
-      <canvas id="wheel"></canvas>
+      <div class="wheel-disc"><canvas id="wheel"></canvas></div>
       <button class="hub idle" id="btn-roll">转！</button>
     </div>
     <div class="card result" id="result">
@@ -218,11 +221,7 @@
   var current = 'pick';
   function go(page) {
     current = page;
-    document.querySelectorAll('.page').forEach(function (p) {
-      var on = p.id === 'page-' + page;
-      p.classList.toggle('active', on); p.classList.toggle('enter', on);
-    });
-    clearTimeout(go.t); go.t = setTimeout(function () { $('page-' + page).classList.remove('enter'); }, 600);
+    document.querySelectorAll('.page').forEach(function (p) { p.classList.toggle('active', p.id === 'page-' + page); });
     document.querySelectorAll('nav button').forEach(function (b) { b.classList.toggle('active', b.dataset.page === page); });
     $('title').textContent = { pick: '今天吃什么', menu: '我的菜单', hist: '吃过的记录' }[page];
     render();
@@ -274,6 +273,7 @@
   var COLORS = ['#ff6b35', '#ffb547', '#ff8a5c', '#f25c54', '#ffcf70', '#ff9f43', '#e8505b', '#ffa26b'];
   var slots = [], rotation = 0, spinning = false, picked = [];
   var cv = $('wheel'), ctx = cv.getContext('2d');
+  var REDUCED = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   function vibrate(ms) {
     try { if (window.Android && Android.vibrate) Android.vibrate(ms); else if (navigator.vibrate) navigator.vibrate(ms); } catch (e) {}
@@ -306,28 +306,33 @@
     var a = Math.PI * 2 / n;
     var fs = Math.max(R * 0.055, Math.min(R * 0.09, R * 0.75 / n));
     for (var i = 0; i < n; i++) {
-      var s0 = -Math.PI / 2 + rotation + i * a;
+      var s0 = -Math.PI / 2 + i * a;
       ctx.beginPath(); ctx.moveTo(0, 0); ctx.arc(0, 0, r, s0, s0 + a); ctx.closePath();
       ctx.fillStyle = n === 1 ? COLORS[0] : COLORS[(i % COLORS.length === 0 && i === n - 1) ? 1 : i % COLORS.length];
       ctx.fill();
       ctx.strokeStyle = 'rgba(255,255,255,.8)'; ctx.lineWidth = Math.max(1, R * 0.008); ctx.stroke();
       // 文字沿半径方向
-      var mid = s0 + a / 2, flip = Math.cos(mid) < 0;               // 左半边翻转，文字不倒着
-      ctx.save(); ctx.rotate(flip ? mid + Math.PI : mid);
+      // 文字沿半径朝外排，和实体转盘一样（整盘会转，不做左右翻转）
+      ctx.save(); ctx.rotate(s0 + a / 2);
       ctx.fillStyle = '#fff'; ctx.font = '600 ' + fs + 'px -apple-system, "PingFang SC", sans-serif';
-      ctx.textAlign = flip ? 'left' : 'right'; ctx.textBaseline = 'middle';
+      ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
       ctx.shadowColor = 'rgba(0,0,0,.25)'; ctx.shadowBlur = 3;
-      ctx.fillText(clip(slots[i].name, n > 8 ? 6 : 8), flip ? -(r - R * 0.07) : r - R * 0.07, 0);
+      ctx.fillText(clip(slots[i].name, n > 8 ? 6 : 8), r - R * 0.07, 0);
       ctx.restore();
     }
     // 外圈灯珠
     for (var k = 0; k < 24; k++) {
       var t = k / 24 * Math.PI * 2;
       ctx.beginPath(); ctx.arc(Math.cos(t) * (R * 0.96), Math.sin(t) * (R * 0.96), R * 0.018, 0, Math.PI * 2);
-      ctx.fillStyle = (k + Math.floor(rotation * 4)) % 2 ? '#ffd27a' : '#ff6b35'; ctx.fill();
+      ctx.fillStyle = k % 2 ? '#ffd27a' : '#ff6b35'; ctx.fill();
     }
     ctx.restore();
+    applyRotation();
   }
+  // 盘面只画一次，转动交给 GPU：只改 canvas 的 transform
+  function applyRotation() { cv.style.transform = 'rotate(' + rotation + 'rad)'; }
+  // 指针被扇区分界处的"钉子"拨动：刚越过分界时偏得最多，随后弹回
+  function setPointer(kick) { $('pointer').style.transform = kick ? 'rotate(' + (-kick) + 'deg)' : ''; }
   function indexAtPointer() {
     var n = slots.length, a = Math.PI * 2 / n;
     var off = ((-rotation) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
@@ -335,25 +340,30 @@
   }
   function spinTo(winner, list, duration) {
     return new Promise(function (resolve) {
-      if (slots.indexOf(winner) < 0) slots = sampleSlots(list, winner);
+      if (slots.indexOf(winner) < 0) { slots = sampleSlots(list, winner); drawWheel(); }
       var n = slots.length, a = Math.PI * 2 / n, w = slots.indexOf(winner);
       var target = -(w + 0.2 + Math.random() * 0.6) * a;           // 落在扇区中间附近，不压线
       var base = rotation % (Math.PI * 2);
       var delta = ((target - base) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
       var from = rotation, to = rotation + delta + Math.PI * 2 * (5 + Math.floor(Math.random() * 3));
+      if (REDUCED) { to = rotation + delta + Math.PI * 2; duration = 1200; }
       var t0 = performance.now(), last = indexAtPointer();
       var ease = function (t) { return 1 - Math.pow(1 - t, 4); };   // 先快后慢
       (function frame(now) {
         var t = Math.min(1, (now - t0) / duration);
         rotation = from + (to - from) * ease(t);
-        drawWheel();
+        applyRotation();
         var idx = indexAtPointer();
         if (idx !== last) {
           last = idx;
-          var p = $('pointer'); p.classList.remove('tick'); void p.offsetWidth; p.classList.add('tick');
           if (t > 0.35) vibrate(8);                                   // 慢下来后才逐格震动
         }
-        if (t < 1) requestAnimationFrame(frame); else resolve();
+        if (!REDUCED) {
+          // 距上一条分界线转过的比例：0 = 刚越过；转得越快，指针越来不及弹回
+          var off = ((-rotation) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2), f = 1 - (off % a) / a;
+          setPointer(f < 0.3 ? 24 * (1 - f / 0.3) : 0);
+        }
+        if (t < 1) requestAnimationFrame(frame); else { setPointer(0); resolve(); }
       })(t0);
     });
   }
@@ -399,11 +409,11 @@
     data.history = data.history.slice(0, 200);
     save(); $('after-roll').hidden = true; $('r-meta').textContent = '已记录，开吃！🎉'; updatePoolInfo();
   };
-  window.addEventListener('resize', function () { if (!spinning) drawWheel(); });
+  window.addEventListener('resize', function () { drawWheel(); });
 
   // 撒花
   function confetti() {
-    if (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    if (REDUCED) return;
     var c = $('confetti'), g = c.getContext('2d'), dpr = window.devicePixelRatio || 1;
     c.hidden = false; c.width = innerWidth * dpr; c.height = innerHeight * dpr; g.scale(dpr, dpr);
     var ps = [], cx = innerWidth / 2, cy = innerHeight * 0.35;
