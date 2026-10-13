@@ -18,14 +18,38 @@
   nav { position: fixed; bottom: 0; left: 0; right: 0; display: flex; background: #fff; border-top: 1px solid var(--line); }
   nav button { flex: 1; border: 0; background: none; padding: 10px 0 12px; font-size: 13px; color: var(--muted); }
   nav button b { display: block; font-size: 20px; font-weight: normal; }
+  nav button { transition: color .2s; }
   nav button.active { color: var(--primary); }
-  .page { display: none; } .page.active { display: block; }
+  nav button.active b { animation: navpop .35s cubic-bezier(.2,1.8,.4,1); }
+  @keyframes navpop { 0% { transform: scale(.7); } 100% { transform: none; } }
+  .page { display: none; } .page.active { display: block; animation: pagein .28s ease-out; }
+  @keyframes pagein { from { opacity: 0; transform: translateY(10px); } }
+  .page.enter .card { animation: cardin .35s ease-out backwards; }
+  .page.enter .card:nth-child(2) { animation-delay: .04s; } .page.enter .card:nth-child(3) { animation-delay: .08s; }
+  .page.enter .card:nth-child(4) { animation-delay: .12s; } .page.enter .card:nth-child(n+5) { animation-delay: .16s; }
+  @keyframes cardin { from { opacity: 0; transform: translateY(14px); } }
   .card { background: var(--card); border-radius: 14px; padding: 16px; margin-bottom: 14px; box-shadow: 0 1px 3px rgba(0,0,0,.05); }
-  .result { text-align: center; padding: 28px 16px; }
-  .result .name { font-size: 30px; font-weight: 700; min-height: 45px; word-break: break-all; }
-  .result .meta { color: var(--muted); margin-top: 6px; min-height: 22px; }
-  .result.rolling .name { color: var(--primary); }
-  .btn { border: 0; border-radius: 10px; padding: 10px 16px; font-size: 15px; background: var(--line); color: var(--text); }
+  /* 转盘 */
+  .wheel-wrap { position: relative; width: min(100%, 340px); aspect-ratio: 1; margin: 4px auto 0; }
+  .wheel-wrap canvas { width: 100%; height: 100%; display: block; filter: drop-shadow(0 8px 18px rgba(232,90,42,.25)); }
+  .pointer { position: absolute; left: 50%; top: -6px; width: 30px; height: 40px; margin-left: -15px; transform-origin: 50% 8px; z-index: 2; filter: drop-shadow(0 2px 3px rgba(0,0,0,.25)); }
+  .pointer.tick { animation: tick .12s ease-out; }
+  @keyframes tick { 40% { transform: rotate(-22deg); } }
+  .hub { position: absolute; left: 50%; top: 50%; width: 27%; height: 27%; transform: translate(-50%,-50%); border-radius: 50%; border: 4px solid #fff;
+    background: radial-gradient(circle at 35% 30%, #ff9a6b, var(--primary) 60%, var(--primary-dark)); color: #fff; font-size: 20px; font-weight: 700;
+    box-shadow: 0 4px 14px rgba(232,90,42,.45); transition: transform .15s; z-index: 3; }
+  .hub:active { transform: translate(-50%,-50%) scale(.92); }
+  .hub:disabled { opacity: 1; }
+  .hub.idle { animation: breathe 2.4s ease-in-out infinite; }
+  @keyframes breathe { 50% { box-shadow: 0 4px 22px rgba(232,90,42,.7), 0 0 0 8px rgba(255,107,53,.12); } }
+  .result { text-align: center; padding: 18px 16px; margin-top: 16px; }
+  .result .name { font-size: 26px; font-weight: 700; min-height: 39px; word-break: break-all; }
+  .result .meta { color: var(--muted); margin-top: 4px; min-height: 22px; }
+  .result.pop { animation: pop .5s cubic-bezier(.2,1.6,.4,1); }
+  @keyframes pop { 0% { transform: scale(.85); opacity: .3; } 100% { transform: none; opacity: 1; } }
+  #confetti { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 30; }
+  .btn { border: 0; border-radius: 10px; padding: 10px 16px; font-size: 15px; background: var(--line); color: var(--text); transition: transform .12s, opacity .2s; }
+  .btn:active { transform: scale(.95); }
   .btn.primary { background: var(--primary); color: #fff; }
   .btn.ok { background: var(--ok); color: #fff; }
   .btn.danger { background: var(--danger); color: #fff; }
@@ -52,13 +76,19 @@
   .empty { text-align: center; color: var(--muted); padding: 30px 0; }
   .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
   .toolbar .btn { flex: 1; white-space: nowrap; }
-  .mask { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: none; align-items: flex-end; z-index: 10; }
-  .mask.show { display: flex; }
-  .sheet { background: #fff; width: 100%; max-height: 90%; overflow: auto; border-radius: 16px 16px 0 0; padding: 18px 16px 24px; }
+  .mask { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: flex; align-items: flex-end; z-index: 10;
+    opacity: 0; visibility: hidden; transition: opacity .25s, visibility 0s .25s; }
+  .mask.show { opacity: 1; visibility: visible; transition: opacity .25s; }
+  .sheet { background: #fff; width: 100%; max-height: 90%; overflow: auto; border-radius: 16px 16px 0 0; padding: 18px 16px 24px;
+    transform: translateY(100%); transition: transform .3s cubic-bezier(.2,.9,.3,1); }
+  .mask.show .sheet { transform: none; }
   .sheet h2 { margin: 0 0 14px; font-size: 18px; }
   .hist { display: flex; justify-content: space-between; padding: 10px 0; border-top: 1px solid var(--line); }
   .hist:first-child { border-top: 0; }
-  .toast { position: fixed; left: 50%; bottom: 100px; transform: translateX(-50%); background: rgba(0,0,0,.75); color: #fff; padding: 8px 16px; border-radius: 20px; font-size: 14px; display: none; z-index: 20; }
+  .toast { position: fixed; left: 50%; bottom: 100px; transform: translateX(-50%); background: rgba(0,0,0,.75); color: #fff; padding: 8px 16px; border-radius: 20px; font-size: 14px; z-index: 20;
+    opacity: 0; visibility: hidden; transition: opacity .2s, transform .2s, visibility 0s .2s; transform: translate(-50%, 10px); }
+  .toast.show { opacity: 1; visibility: visible; transform: translate(-50%, 0); transition: opacity .2s, transform .2s; }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
   .thumbs { display: flex; gap: 6px; flex-wrap: wrap; margin: 10px 0; }
   .thumbs img { width: 64px; height: 64px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); }
   .spin { display: inline-block; width: 16px; height: 16px; border: 2px solid #fff; border-right-color: transparent; border-radius: 50%; animation: sp .8s linear infinite; vertical-align: -3px; margin-right: 6px; }
@@ -72,12 +102,16 @@
 <main>
   <!-- 抽签 -->
   <section class="page active" id="page-pick">
-    <div class="card result" id="result">
-      <div class="name" id="r-name">🍜</div>
-      <div class="meta" id="r-meta">点下面的按钮，帮你决定</div>
+    <div class="wheel-wrap">
+      <svg class="pointer" id="pointer" viewBox="0 0 30 40"><path d="M15 40 L3 10 A12 12 0 1 1 27 10 Z" fill="#2b2118"/><circle cx="15" cy="12" r="5" fill="#fff"/></svg>
+      <canvas id="wheel"></canvas>
+      <button class="hub idle" id="btn-roll">转！</button>
     </div>
-    <button class="btn primary big" id="btn-roll">今天吃什么？</button>
-    <div class="row" style="margin-top:10px" id="after-roll" hidden>
+    <div class="card result" id="result">
+      <div class="name" id="r-name">今天吃什么？</div>
+      <div class="meta" id="r-meta">点转盘中间的按钮</div>
+    </div>
+    <div class="row" id="after-roll" hidden>
       <button class="btn" id="btn-again">换一个</button>
       <button class="btn ok" id="btn-accept">就吃这个！</button>
     </div>
@@ -123,6 +157,7 @@
 
 <div class="mask" id="mask"><div class="sheet" id="sheet"></div></div>
 <div class="toast" id="toast"></div>
+<canvas id="confetti" hidden></canvas>
 
 <script>
 (function () {
@@ -169,8 +204,8 @@
   // ---------- 通用 ----------
   var toastTimer;
   function toast(msg) {
-    var t = $('toast'); t.textContent = msg; t.style.display = 'block';
-    clearTimeout(toastTimer); toastTimer = setTimeout(function () { t.style.display = 'none'; }, 1800);
+    var t = $('toast'); t.textContent = msg; t.classList.add('show');
+    clearTimeout(toastTimer); toastTimer = setTimeout(function () { t.classList.remove('show'); }, 2000);
   }
   function openSheet(html) { $('sheet').innerHTML = html; $('mask').classList.add('show'); }
   function closeSheet() { $('mask').classList.remove('show'); }
@@ -183,7 +218,11 @@
   var current = 'pick';
   function go(page) {
     current = page;
-    document.querySelectorAll('.page').forEach(function (p) { p.classList.toggle('active', p.id === 'page-' + page); });
+    document.querySelectorAll('.page').forEach(function (p) {
+      var on = p.id === 'page-' + page;
+      p.classList.toggle('active', on); p.classList.toggle('enter', on);
+    });
+    clearTimeout(go.t); go.t = setTimeout(function () { $('page-' + page).classList.remove('enter'); }, 600);
     document.querySelectorAll('nav button').forEach(function (b) { b.classList.toggle('active', b.dataset.page === page); });
     $('title').textContent = { pick: '今天吃什么', menu: '我的菜单', hist: '吃过的记录' }[page];
     render();
@@ -223,31 +262,134 @@
     ft.value = vt; if (ft.value !== vt) ft.value = '';
     updatePoolInfo();
   }
-  function updatePoolInfo() { $('pool-info').textContent = '符合条件的菜品：' + pool().length + ' 道'; }
+  function updatePoolInfo() {
+    var list = pool();
+    $('pool-info').textContent = '符合条件的菜品：' + list.length + ' 道' + (list.length > WHEEL_MAX ? '（转盘上随机展示 ' + WHEEL_MAX + ' 道，每道被抽中的概率相同）' : '');
+    if (!spinning) { slots = sampleSlots(list, null); drawWheel(); }
+  }
   ['f-shop', 'f-tag', 'f-budget', 'f-avoid'].forEach(function (id) { $(id).addEventListener('input', updatePoolInfo); $(id).addEventListener('change', updatePoolInfo); });
 
-  var picked = [], rolling = false;
+  // ---------- 转盘 ----------
+  var WHEEL_MAX = 12;
+  var COLORS = ['#ff6b35', '#ffb547', '#ff8a5c', '#f25c54', '#ffcf70', '#ff9f43', '#e8505b', '#ffa26b'];
+  var slots = [], rotation = 0, spinning = false, picked = [];
+  var cv = $('wheel'), ctx = cv.getContext('2d');
+
+  function vibrate(ms) {
+    try { if (window.Android && Android.vibrate) Android.vibrate(ms); else if (navigator.vibrate) navigator.vibrate(ms); } catch (e) {}
+  }
+  // 转盘最多放 WHEEL_MAX 道；must 为必须出现在盘上的菜（本次中奖的那道）
+  function sampleSlots(list, must) {
+    var others = pickN(list.filter(function (d) { return d !== must; }), must ? WHEEL_MAX - 1 : WHEEL_MAX);
+    if (must) others.splice(Math.floor(Math.random() * (others.length + 1)), 0, must);
+    return others;
+  }
+  function fitCanvas() {
+    var r = window.devicePixelRatio || 1, w = cv.clientWidth || 300;
+    if (cv.width !== Math.round(w * r)) { cv.width = cv.height = Math.round(w * r); }
+  }
+  function clip(text, max) { return text.length > max ? text.slice(0, max - 1) + '…' : text; }
+  function drawWheel() {
+    fitCanvas();
+    var W = cv.width, R = W / 2, n = slots.length;
+    ctx.clearRect(0, 0, W, W);
+    ctx.save(); ctx.translate(R, R);
+    // 外圈
+    ctx.beginPath(); ctx.arc(0, 0, R - 2, 0, Math.PI * 2); ctx.fillStyle = '#fff'; ctx.fill();
+    var r = R * 0.92;
+    if (!n) {
+      ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fillStyle = '#eee3da'; ctx.fill();
+      ctx.fillStyle = '#8a7a6d'; ctx.font = (R * 0.08) + 'px sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText('没有可选的菜品', 0, -R * 0.45);
+      ctx.restore(); return;
+    }
+    var a = Math.PI * 2 / n;
+    var fs = Math.max(R * 0.055, Math.min(R * 0.09, R * 0.75 / n));
+    for (var i = 0; i < n; i++) {
+      var s0 = -Math.PI / 2 + rotation + i * a;
+      ctx.beginPath(); ctx.moveTo(0, 0); ctx.arc(0, 0, r, s0, s0 + a); ctx.closePath();
+      ctx.fillStyle = n === 1 ? COLORS[0] : COLORS[(i % COLORS.length === 0 && i === n - 1) ? 1 : i % COLORS.length];
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,.8)'; ctx.lineWidth = Math.max(1, R * 0.008); ctx.stroke();
+      // 文字沿半径方向
+      var mid = s0 + a / 2, flip = Math.cos(mid) < 0;               // 左半边翻转，文字不倒着
+      ctx.save(); ctx.rotate(flip ? mid + Math.PI : mid);
+      ctx.fillStyle = '#fff'; ctx.font = '600 ' + fs + 'px -apple-system, "PingFang SC", sans-serif';
+      ctx.textAlign = flip ? 'left' : 'right'; ctx.textBaseline = 'middle';
+      ctx.shadowColor = 'rgba(0,0,0,.25)'; ctx.shadowBlur = 3;
+      ctx.fillText(clip(slots[i].name, n > 8 ? 6 : 8), flip ? -(r - R * 0.07) : r - R * 0.07, 0);
+      ctx.restore();
+    }
+    // 外圈灯珠
+    for (var k = 0; k < 24; k++) {
+      var t = k / 24 * Math.PI * 2;
+      ctx.beginPath(); ctx.arc(Math.cos(t) * (R * 0.96), Math.sin(t) * (R * 0.96), R * 0.018, 0, Math.PI * 2);
+      ctx.fillStyle = (k + Math.floor(rotation * 4)) % 2 ? '#ffd27a' : '#ff6b35'; ctx.fill();
+    }
+    ctx.restore();
+  }
+  function indexAtPointer() {
+    var n = slots.length, a = Math.PI * 2 / n;
+    var off = ((-rotation) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
+    return Math.floor(off / a) % n;
+  }
+  function spinTo(winner, list, duration) {
+    return new Promise(function (resolve) {
+      if (slots.indexOf(winner) < 0) slots = sampleSlots(list, winner);
+      var n = slots.length, a = Math.PI * 2 / n, w = slots.indexOf(winner);
+      var target = -(w + 0.2 + Math.random() * 0.6) * a;           // 落在扇区中间附近，不压线
+      var base = rotation % (Math.PI * 2);
+      var delta = ((target - base) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
+      var from = rotation, to = rotation + delta + Math.PI * 2 * (5 + Math.floor(Math.random() * 3));
+      var t0 = performance.now(), last = indexAtPointer();
+      var ease = function (t) { return 1 - Math.pow(1 - t, 4); };   // 先快后慢
+      (function frame(now) {
+        var t = Math.min(1, (now - t0) / duration);
+        rotation = from + (to - from) * ease(t);
+        drawWheel();
+        var idx = indexAtPointer();
+        if (idx !== last) {
+          last = idx;
+          var p = $('pointer'); p.classList.remove('tick'); void p.offsetWidth; p.classList.add('tick');
+          if (t > 0.35) vibrate(8);                                   // 慢下来后才逐格震动
+        }
+        if (t < 1) requestAnimationFrame(frame); else resolve();
+      })(t0);
+    });
+  }
+
+  function showResult() {
+    var total = picked.reduce(function (s, d) { return s + (+d.price || 0); }, 0);
+    var shops = picked.map(function (d) { return shopName(d.shopId); }).filter(function (v, i, a) { return a.indexOf(v) === i; });
+    $('r-name').innerHTML = picked.map(function (d) { return esc(d.name); }).join(' + ');
+    $('r-meta').textContent = shops.join(' / ') + (total ? '  ·  ¥' + Math.round(total * 100) / 100 : '');
+    var card = $('result'); card.classList.remove('pop'); void card.offsetWidth; card.classList.add('pop');
+  }
+
   function roll() {
-    if (rolling) return;
+    if (spinning) return;
     var list = pool();
     if (!list.length) { toast('没有符合条件的菜品，放宽筛选或去「菜单」添加'); return; }
     var n = Math.min(+$('f-count').value, list.length);
-    rolling = true; $('btn-roll').disabled = true; $('after-roll').hidden = true;
-    $('result').classList.add('rolling'); $('r-meta').textContent = '正在挑选…';
-    var t = 0, steps = 18;
-    (function tick() {
-      var r = list[Math.floor(Math.random() * list.length)];
-      $('r-name').textContent = r.name;
-      if (++t < steps) { setTimeout(tick, 40 + t * 8); return; }
-      picked = pickN(list, n);
-      $('result').classList.remove('rolling');
-      $('r-name').innerHTML = picked.map(function (d) { return esc(d.name); }).join('<br>');
-      var total = picked.reduce(function (s, d) { return s + (+d.price || 0); }, 0);
-      var shops = picked.map(function (d) { return shopName(d.shopId); }).filter(function (v, i, a) { return a.indexOf(v) === i; });
-      $('r-meta').textContent = shops.join(' / ') + (total ? '  ·  合计 ¥' + Math.round(total * 100) / 100 : '');
-      rolling = false; $('btn-roll').disabled = false; $('after-roll').hidden = false;
-      if (navigator.vibrate) navigator.vibrate(30);
-    })();
+    var winners = pickN(list, n);
+    spinning = true; picked = [];
+    $('btn-roll').disabled = true; $('btn-roll').classList.remove('idle'); $('after-roll').hidden = true;
+    $('r-name').textContent = '转呀转…'; $('r-meta').textContent = n > 1 ? '要转 ' + n + ' 次' : '';
+    var remaining = list.slice(), step = Promise.resolve();
+    winners.forEach(function (w, i) {
+      step = step.then(function () {
+        if (i > 0) { slots = sampleSlots(remaining, null); drawWheel(); }
+        return spinTo(w, remaining, i === 0 ? 4200 : 2600);
+      }).then(function () {
+        picked.push(w); remaining.splice(remaining.indexOf(w), 1);
+        vibrate(40); showResult();
+        return new Promise(function (r) { setTimeout(r, i < winners.length - 1 ? 700 : 0); });
+      });
+    });
+    step.then(function () {
+      spinning = false; $('btn-roll').disabled = false; $('btn-roll').classList.add('idle');
+      $('after-roll').hidden = false; confetti();
+    });
   }
   $('btn-roll').onclick = roll;
   $('btn-again').onclick = roll;
@@ -257,6 +399,31 @@
     data.history = data.history.slice(0, 200);
     save(); $('after-roll').hidden = true; $('r-meta').textContent = '已记录，开吃！🎉'; updatePoolInfo();
   };
+  window.addEventListener('resize', function () { if (!spinning) drawWheel(); });
+
+  // 撒花
+  function confetti() {
+    if (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    var c = $('confetti'), g = c.getContext('2d'), dpr = window.devicePixelRatio || 1;
+    c.hidden = false; c.width = innerWidth * dpr; c.height = innerHeight * dpr; g.scale(dpr, dpr);
+    var ps = [], cx = innerWidth / 2, cy = innerHeight * 0.35;
+    for (var i = 0; i < 90; i++) {
+      var ang = Math.random() * Math.PI * 2, sp = 4 + Math.random() * 7;
+      ps.push({ x: cx, y: cy, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp - 4, r: Math.random() * Math.PI,
+        vr: (Math.random() - .5) * .4, w: 6 + Math.random() * 6, h: 3 + Math.random() * 4, c: COLORS[i % COLORS.length] });
+    }
+    var t0 = performance.now();
+    (function frame(now) {
+      var t = (now - t0) / 1600;
+      g.clearRect(0, 0, innerWidth, innerHeight);
+      ps.forEach(function (p) {
+        p.vy += 0.25; p.vx *= 0.99; p.x += p.vx; p.y += p.vy; p.r += p.vr;
+        g.save(); g.globalAlpha = Math.max(0, 1 - t); g.translate(p.x, p.y); g.rotate(p.r);
+        g.fillStyle = p.c; g.fillRect(-p.w / 2, -p.h / 2, p.w, p.h); g.restore();
+      });
+      if (t < 1) requestAnimationFrame(frame); else { g.clearRect(0, 0, innerWidth, innerHeight); c.hidden = true; }
+    })(t0);
+  }
 
   // ---------- 菜单 ----------
   function renderMenu() {
@@ -367,7 +534,7 @@
   $('btn-import').onclick = function () { openImport(''); };
   function openImport(prefill) {
     openSheet('<h2>批量导入</h2>' +
-      '<pre class="hint">【店铺名】 单独一行表示店铺\n后面每行：菜名 价格 分类标签\n\n例如：\n【老王黄焖鸡】\n黄焖鸡米饭 18 盖饭\n黄焖排骨 22 盖饭 辣\n【兰州拉面】\n牛肉拉面 15 面</pre>' +
+      '<pre class="hint">【店铺名】 单独一行表示店铺\n后面每行：菜名 价格（可再跟分类标签）\n\n例如：\n【老王黄焖鸡】\n黄焖鸡米饭 18\n黄焖排骨 22 辣\n【兰州拉面】\n牛肉拉面 15</pre>' +
       '<div class="field"><textarea id="imp-text" placeholder="把在扫呗外卖小程序里看到的菜单整理后粘贴到这里">' + esc(prefill) + '</textarea></div>' +
       '<div class="row"><button class="btn" id="imp-cancel">取消</button><button class="btn primary" id="imp-ok">导入</button></div>');
     $('imp-cancel').onclick = closeSheet;
@@ -385,10 +552,17 @@
     zhipu: { name: '智谱 GLM（glm-4v-flash 免费）', fmt: 'openai', url: 'https://open.bigmodel.cn/api/paas/v4/chat/completions', model: 'glm-4v-flash', keyHint: '在 open.bigmodel.cn 获取' },
     custom: { name: '自定义（OpenAI 兼容接口）', fmt: 'openai', url: '', model: '', keyHint: 'Bearer Token' }
   };
-  var AI_PROMPT = '这些图片是外卖小程序的菜单截图或照片。请识别出其中所有的菜品，严格按下面的格式输出纯文本，不要输出任何解释、不要用代码块：\n' +
-    '【店铺名】\n菜名 价格 分类\n\n规则：\n- 第一行是店铺名，用【】括起来；看不出店铺名就写【未命名店铺】；多家店铺就分多段\n' +
-    '- 之后每行一道菜：菜名、价格（只写数字，取实际售价/折后价）、分类（用菜单上的分类，如 招牌、盖饭、饮品；没有可省略），用空格分隔\n' +
-    '- 菜名里不要有空格\n- 同一道菜只写一次；有多个规格时写最常见的那个价格\n- 忽略配送费、满减、包装费等非菜品信息';
+  var AI_PROMPT = '任务：从这些外卖菜单截图中提取「店铺名、菜品名、价格」，只要这三样。\n\n' +
+    '输出格式（纯文本，不要代码块、不要表格、不要任何解释或开场白）：\n' +
+    '【店铺名】\n菜品名 价格\n菜品名 价格\n\n' +
+    '规则：\n' +
+    '1. 店铺名写在【】里单独一行；图中看不到店铺名就写【未命名店铺】；多家店铺分成多段。\n' +
+    '2. 每道菜一行：菜品名 + 一个空格 + 价格。价格只写阿拉伯数字（如 18 或 18.5），不带 ¥、元。\n' +
+    '3. 价格取实际要付的价格：有折扣价/活动价时取折扣价，不要原价；有多个规格时取最便宜的那个。看不清价格就只写菜品名。\n' +
+    '4. 菜品名照抄图中文字，去掉其中的空格；不要附加规格、描述、销量、评分、"招牌""推荐"等标签。\n' +
+    '5. 同一道菜在多张图里重复出现只写一次。\n' +
+    '6. 不要输出分类标题、配送费、起送价、包装费、满减、优惠券、店铺公告等任何非菜品内容。\n\n' +
+    '示例：\n【老王黄焖鸡】\n黄焖鸡米饭 18\n黄焖排骨饭 22.5\n可乐 3';
 
   function aiCfg() {
     var c = {};

@@ -6,7 +6,10 @@ import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
 import android.webkit.JavascriptInterface;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -108,6 +111,18 @@ public class MainActivity extends Activity {
                 cm.setPrimaryClip(ClipData.newPlainText("food-picker", text));
                 Toast.makeText(MainActivity.this, "已复制到剪贴板", Toast.LENGTH_SHORT).show();
             });
+        }
+
+        @JavascriptInterface
+        @SuppressWarnings("deprecation")
+        public void vibrate(int ms) {
+            Vibrator v = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
+            if (v == null || !v.hasVibrator()) return;
+            if (Build.VERSION.SDK_INT >= 26) {
+                v.vibrate(VibrationEffect.createOneShot(ms, VibrationEffect.DEFAULT_AMPLITUDE));
+            } else {
+                v.vibrate(ms);
+            }
         }
 
         /** 由原生发起 POST 请求（避开 WebView 的跨域限制），结果回调 window.__httpCb(id, status, body)。 */
