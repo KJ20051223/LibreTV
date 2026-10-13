@@ -23,7 +23,7 @@ jobs:
           gradle-version: '8.14.3'
 
       - name: Build release APK
-        run: gradle :app:assembleRelease --no-daemon
+        run: gradle :app:assembleRelease --no-daemon -PbuildNumber=$((100 + ${{ github.run_number }}))
 
       - name: Rename APK
         run: cp app/build/outputs/apk/release/app-release.apk FoodPicker.apk

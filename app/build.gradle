@@ -10,15 +10,25 @@ android {
         applicationId 'com.foodpicker.app'
         minSdk 24
         targetSdk 35
-        versionCode 4
-        versionName '1.2.1'
+        // CI 传入递增的构建号；版本号只增不减，才能覆盖安装
+        versionCode((project.findProperty('buildNumber') ?: '4') as Integer)
+        versionName "1.3.${project.findProperty('buildNumber') ?: 'dev'}"
+    }
+
+    // 固定签名：每次构建签名一致，新版才能直接覆盖安装旧版
+    signingConfigs {
+        release {
+            storeFile file('release.keystore')
+            storePassword 'foodpicker'
+            keyAlias 'foodpicker'
+            keyPassword 'foodpicker'
+        }
     }
 
     buildTypes {
         release {
             minifyEnabled false
-            // 使用 debug 签名，方便直接安装；正式发布请换成自己的签名
-            signingConfig signingConfigs.debug
+            signingConfig signingConfigs.release
         }
     }
 

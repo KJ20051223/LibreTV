@@ -58,8 +58,26 @@
   .check { display: flex; align-items: center; gap: 8px; color: var(--text); font-size: 14px; margin: 10px 0 0; }
   .check input { width: auto; }
   .field { margin-bottom: 12px; }
-  .shop-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+  .shop-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .shop-title h3 { margin: 0; font-size: 17px; }
+  .shop-head { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; background: none; border: 0; padding: 4px 0; text-align: left; color: inherit; font: inherit; }
+  .shop-head .chev { flex: none; width: 20px; height: 20px; color: var(--muted); transition: transform 200ms var(--ease-out); }
+  .card.open .shop-head .chev { transform: rotate(90deg); }
+  .shop-head .sub { display: block; font-size: 13px; color: var(--muted); font-weight: normal; margin-top: 2px; }
+  .shop-body { margin-top: 8px; }
+  .card:not(.open) .shop-body { display: none; }
+  .search-row { display: flex; gap: 8px; align-items: center; margin-bottom: 14px; }
+  .search-row input { flex: 1; }
+  .search-row .btn { flex: none; white-space: nowrap; }
+  mark { background: #ffe1c7; color: inherit; border-radius: 3px; padding: 0 1px; }
+  .preview { font-size: 14px; margin: -4px 0 12px; min-height: 21px; }
+  .preview b { color: var(--primary-dark); }
+  .clip-bar { position: fixed; left: 12px; right: 12px; bottom: 76px; z-index: 15; display: flex; align-items: center; gap: 8px;
+    background: #2b2118; color: #fff; border-radius: 12px; padding: 10px 10px 10px 14px; font-size: 14px; box-shadow: 0 6px 20px rgba(0,0,0,.2);
+    transition: opacity 200ms var(--ease-out), transform 200ms var(--ease-out); }
+  .clip-bar span { flex: 1; min-width: 0; }
+  .clip-bar .btn:not(.primary) { background: rgba(255,255,255,.15); color: #fff; }
+  @starting-style { .clip-bar { opacity: 0; transform: translateY(8px); } }
   .dish { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); }
   .dish .info { flex: 1; min-width: 0; }
   .dish .info .n { font-weight: 600; }
@@ -136,11 +154,17 @@
   <!-- 菜单 -->
   <section class="page" id="page-menu">
     <div class="toolbar">
-      <button class="btn primary" id="btn-ai">📷 AI 识别菜单</button>
-      <button class="btn primary" id="btn-add-dish">＋ 菜品</button>
+      <button class="btn primary" id="btn-ai">📷 AI 识别</button>
+      <button class="btn primary" id="btn-import">📥 一键导入</button>
+    </div>
+    <div class="toolbar">
+      <button class="btn" id="btn-add-dish">＋ 菜品</button>
       <button class="btn" id="btn-add-shop">＋ 店铺</button>
-      <button class="btn" id="btn-import">批量导入</button>
       <button class="btn" id="btn-backup">备份/恢复</button>
+    </div>
+    <div class="search-row">
+      <input id="menu-q" type="search" placeholder="搜索菜品或店铺">
+      <button class="btn small" id="btn-fold">全部展开</button>
     </div>
     <div id="menu-list"></div>
   </section>
@@ -160,6 +184,11 @@
 
 <div class="mask" id="mask"><div class="sheet" id="sheet"></div></div>
 <div class="toast" id="toast"></div>
+<div class="clip-bar" id="clip-bar" hidden>
+  <span id="clip-msg"></span>
+  <button class="btn small" id="clip-no">忽略</button>
+  <button class="btn small primary" id="clip-yes">导入</button>
+</div>
 <canvas id="confetti" hidden></canvas>
 
 <script>
@@ -436,27 +465,70 @@
   }
 
   // ---------- 菜单 ----------
-  function renderMenu() {
-    var groups = data.shops.map(function (s) { return { shop: s, dishes: data.dishes.filter(function (d) { return d.shopId === s.id; }) }; });
-    var orphans = data.dishes.filter(function (d) { return !data.shops.some(function (s) { return s.id === d.shopId; }); });
+  // 店铺默认收起；展开状态记在本机
+  var OPEN_KEY = 'food_picker_open', openShops = {};
+  try { openShops = JSON.parse(localStorage.getItem(OPEN_KEY)) || {}; } catch (e) {}
+  function saveOpen() { try { localStorage.setItem(OPEN_KEY, JSON.stringify(openShops)); } catch (e) {} }
+  var CHEV = '<svg class="chev" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4l6 6-6 6"/></svg>';
+
+  function hl(text, q) {
+    if (!q) return esc(text);
+    var i = text.toLowerCase().indexOf(q.toLowerCase());
+    return i < 0 ? esc(text) : esc(text.slice(0, i)) + '<mark>' + esc(text.slice(i, i + q.length)) + '</mark>' + esc(text.slice(i + q.length));
+  }
+  function menuGroups() {
+    var byShop = {};
+    data.dishes.forEach(function (d) { (byShop[d.shopId] = byShop[d.shopId] || []).push(d); });
+    var groups = data.shops.map(function (s) { var g = { shop: s, dishes: byShop[s.id] || [] }; delete byShop[s.id]; return g; });
+    var orphans = [].concat.apply([], Object.keys(byShop).map(function (k) { return byShop[k]; }));
     if (orphans.length) groups.push({ shop: { id: '', name: '未分店铺' }, dishes: orphans });
-    if (!groups.length) { $('menu-list').innerHTML = '<div class="empty">还没有菜品，先添加一个店铺吧</div>'; return; }
-    $('menu-list').innerHTML = groups.map(function (g) {
-      var head = '<div class="shop-title"><h3>' + esc(g.shop.name) + ' <span class="muted">' + g.dishes.length + ' 道</span></h3>' +
-        (g.shop.id ? '<span><button class="btn small" data-act="edit-shop" data-id="' + g.shop.id + '">编辑</button> <button class="btn small" data-act="add-to" data-id="' + g.shop.id + '">＋菜品</button></span>' : '') + '</div>';
-      var rows = g.dishes.map(function (d) {
-        return '<div class="dish' + (d.on ? '' : ' off') + '"><div class="info"><div class="n">' + esc(d.name) + ' <span class="price">' + priceText(d.price) + '</span></div><div>' +
+    return groups;
+  }
+  function renderMenu() {
+    var q = $('menu-q').value.trim(), groups = menuGroups();
+    if (!groups.length) { $('menu-list').innerHTML = '<div class="empty">还没有菜品。点上面的「一键导入」或「AI 识别」开始</div>'; $('btn-fold').hidden = true; return; }
+    $('btn-fold').hidden = !!q;
+    var anyClosed = groups.some(function (g) { return !openShops[g.shop.id || '_']; });
+    $('btn-fold').textContent = anyClosed ? '全部展开' : '全部收起';
+    var html = groups.map(function (g) {
+      var key = g.shop.id || '_', shopHit = q && g.shop.name.toLowerCase().indexOf(q.toLowerCase()) >= 0;
+      var dishes = q && !shopHit ? g.dishes.filter(function (d) { return d.name.toLowerCase().indexOf(q.toLowerCase()) >= 0; }) : g.dishes;
+      if (q && !dishes.length) return '';
+      var open = q ? true : !!openShops[key];
+      var prices = g.dishes.map(function (d) { return +d.price; }).filter(function (p) { return p > 0; });
+      var off = g.dishes.filter(function (d) { return !d.on; }).length;
+      var sub = g.dishes.length + ' 道' + (prices.length ? '，¥' + Math.min.apply(null, prices) + (Math.max.apply(null, prices) !== Math.min.apply(null, prices) ? '–' + Math.max.apply(null, prices) : '') : '') + (off ? '，' + off + ' 道已停用' : '');
+      var head = '<div class="shop-title"><button class="shop-head" data-act="fold" data-id="' + key + '" aria-expanded="' + open + '">' + CHEV +
+        '<h3>' + hl(g.shop.name, q) + '<span class="sub">' + (q && !shopHit ? '找到 ' + dishes.length + ' 道 / ' : '') + sub + '</span></h3></button>' +
+        (g.shop.id ? '<button class="btn small" data-act="edit-shop" data-id="' + g.shop.id + '">编辑</button>' : '') + '</div>';
+      // 收起的店铺不生成菜品行，菜多时也不卡
+      var rows = !open ? '' : (dishes.map(function (d) {
+        return '<div class="dish' + (d.on ? '' : ' off') + '"><div class="info"><div class="n">' + hl(d.name, q) + ' <span class="price">' + priceText(d.price) + '</span></div><div>' +
           (d.tags || []).map(function (t) { return '<span class="tag">' + esc(t) + '</span>'; }).join('') + '</div></div>' +
           '<button class="btn small" data-act="toggle" data-id="' + d.id + '">' + (d.on ? '停用' : '启用') + '</button>' +
           '<button class="btn small" data-act="edit-dish" data-id="' + d.id + '">编辑</button></div>';
-      }).join('') || '<div class="muted">暂无菜品</div>';
-      return '<div class="card">' + head + rows + '</div>';
+      }).join('') || '<div class="muted">暂无菜品</div>') +
+        (g.shop.id && !q ? '<div class="row" style="margin-top:10px"><button class="btn small" data-act="add-to" data-id="' + g.shop.id + '">＋ 添加菜品</button>' +
+          (g.dishes.length ? '<button class="btn small" data-act="all-on" data-id="' + g.shop.id + '">' + (off ? '全部启用' : '全部停用') + '</button>' : '') + '</div>' : '');
+      return '<div class="card' + (open ? ' open' : '') + '">' + head + '<div class="shop-body">' + rows + '</div></div>';
     }).join('');
+    $('menu-list').innerHTML = html || '<div class="empty">没有找到「' + esc(q) + '」</div>';
   }
+  $('menu-q').addEventListener('input', renderMenu);
+  $('btn-fold').onclick = function () {
+    var groups = menuGroups(), expand = groups.some(function (g) { return !openShops[g.shop.id || '_']; });
+    groups.forEach(function (g) { openShops[g.shop.id || '_'] = expand; });
+    saveOpen(); renderMenu();
+  };
   $('menu-list').addEventListener('click', function (e) {
     var b = e.target.closest('button[data-act]'); if (!b) return;
     var id = b.dataset.id, act = b.dataset.act;
-    if (act === 'toggle') { var d = data.dishes.find(function (x) { return x.id === id; }); d.on = !d.on; save(); render(); }
+    if (act === 'fold') { openShops[id] = !openShops[id]; saveOpen(); renderMenu(); }
+    else if (act === 'toggle') { var d = data.dishes.find(function (x) { return x.id === id; }); d.on = !d.on; save(); render(); }
+    else if (act === 'all-on') {
+      var list = data.dishes.filter(function (x) { return x.shopId === id; }), turnOn = list.some(function (x) { return !x.on; });
+      list.forEach(function (x) { x.on = turnOn; }); save(); render();
+    }
     else if (act === 'edit-dish') dishForm(data.dishes.find(function (x) { return x.id === id; }));
     else if (act === 'add-to') dishForm(null, id);
     else if (act === 'edit-shop') shopForm(data.shops.find(function (x) { return x.id === id; }));
@@ -509,50 +581,139 @@
   $('btn-add-dish').onclick = function () { dishForm(); };
   $('btn-add-shop').onclick = function () { shopForm(); };
 
-  // 批量导入：【店铺】开头的行切换店铺，其余每行「菜名 价格 标签…」
-  function parseImport(text) {
-    var shop = null, added = 0, shops = 0;
-    text.split(/\r?\n/).forEach(function (raw) {
+  // ---------- 导入 ----------
+  // 解析：【店铺】开头的行切换店铺，其余每行「菜名 价格 标签…」；能容忍 Markdown 列表/表格
+  function parseMenu(text) {
+    var groups = [], cur = null;
+    function shopOf(name) {
+      var g = groups.find(function (x) { return x.name === name; });
+      if (!g) { g = { name: name, dishes: [] }; groups.push(g); }
+      return g;
+    }
+    String(text || '').split(/\r?\n/).forEach(function (raw) {
       var line = raw.trim();
       if (!line || /^```/.test(line) || /^\|?[\s:|-]+\|?$/.test(line)) return;
       line = line.replace(/\*\*|__/g, '').replace(/^(?:[-*+•]|\d+[.、)])\s+/, '').replace(/^\||\|$/g, '').trim();
       if (!line || /^(菜名|菜品|名称)\s*[|\s]/.test(line)) return;
       var m = line.match(/^(?:【(.+?)】|\[(.+?)\]|#+\s*(.+)|店铺[:：]\s*(.+))$/);
-      if (m) {
-        var name = (m[1] || m[2] || m[3] || m[4]).trim();
-        shop = data.shops.find(function (s) { return s.name === name; });
-        if (!shop) { shop = { id: uid(), name: name }; data.shops.push(shop); shops++; }
-        return;
-      }
-      if (!shop) {
-        shop = data.shops.find(function (s) { return s.name === '未命名店铺'; });
-        if (!shop) { shop = { id: uid(), name: '未命名店铺' }; data.shops.push(shop); shops++; }
-      }
+      if (m) { cur = shopOf((m[1] || m[2] || m[3] || m[4]).trim()); return; }
       var parts = line.replace(/[¥￥]/g, ' ').replace(/元/g, ' ').split(/[\s,，\t|]+/).filter(Boolean);
       var priceIdx = -1;
       for (var i = 1; i < parts.length; i++) if (/^\d+(\.\d+)?$/.test(parts[i])) { priceIdx = i; break; }
-      var dishName = (priceIdx > 0 ? parts.slice(0, priceIdx) : parts.slice(0, 1)).join(' ');
-      var price = priceIdx > 0 ? +parts[priceIdx] : '';
-      var tags = priceIdx > 0 ? parts.slice(priceIdx + 1) : parts.slice(1);
-      var exist = data.dishes.find(function (d) { return d.shopId === shop.id && d.name === dishName; });
-      if (exist) { exist.price = price === '' ? exist.price : price; if (tags.length) exist.tags = tags; return; }
-      data.dishes.push({ id: uid(), shopId: shop.id, name: dishName, price: price, tags: tags, on: true });
-      added++;
+      var name = (priceIdx > 0 ? parts.slice(0, priceIdx) : parts.slice(0, 1)).join(' ');
+      if (!name) return;
+      if (!cur) cur = shopOf('未命名店铺');
+      var dish = { name: name, price: priceIdx > 0 ? +parts[priceIdx] : '', tags: priceIdx > 0 ? parts.slice(priceIdx + 1) : parts.slice(1) };
+      var dup = cur.dishes.find(function (d) { return d.name === name; });
+      if (dup) Object.assign(dup, dish); else cur.dishes.push(dish);
     });
-    return { added: added, shops: shops };
+    return groups.filter(function (g) { return g.dishes.length; });
   }
+  function countDishes(groups) { return groups.reduce(function (n, g) { return n + g.dishes.length; }, 0); }
+
+  // 写入：同名店铺合并（同名菜品更新价格）；replace 为真时同名店铺先清空旧菜品
+  function applyImport(groups, replace) {
+    var r = { added: 0, updated: 0, shops: 0 };
+    groups.forEach(function (g) {
+      var shop = data.shops.find(function (s) { return s.name === g.name; });
+      if (!shop) { shop = { id: uid(), name: g.name }; data.shops.push(shop); r.shops++; }
+      else if (replace) data.dishes = data.dishes.filter(function (d) { return d.shopId !== shop.id; });
+      g.dishes.forEach(function (n) {
+        var exist = data.dishes.find(function (d) { return d.shopId === shop.id && d.name === n.name; });
+        if (exist) { if (n.price !== '') exist.price = n.price; if (n.tags.length) exist.tags = n.tags; r.updated++; }
+        else { data.dishes.push({ id: uid(), shopId: shop.id, name: n.name, price: n.price, tags: n.tags, on: true }); r.added++; }
+      });
+      openShops[shop.id] = groups.length === 1;   // 只导入一家时直接展开给你看
+    });
+    saveOpen(); save();
+    return r;
+  }
+  function importDone(r) {
+    closeSheet(); go('menu');
+    toast('新增 ' + r.added + ' 道' + (r.updated ? '，更新 ' + r.updated + ' 道' : '') + (r.shops ? '，新店铺 ' + r.shops + ' 家' : ''));
+  }
+
+  function readClipboard() {
+    try { if (window.Android && Android.readClipboard) return Promise.resolve(Android.readClipboard() || ''); } catch (e) {}
+    return navigator.clipboard && navigator.clipboard.readText ? navigator.clipboard.readText().catch(function () { return ''; }) : Promise.resolve('');
+  }
+
   $('btn-import').onclick = function () { openImport(''); };
   function openImport(prefill) {
-    openSheet('<h2>批量导入</h2>' +
-      '<pre class="hint">【店铺名】 单独一行表示店铺\n后面每行：菜名 价格（可再跟分类标签）\n\n例如：\n【老王黄焖鸡】\n黄焖鸡米饭 18\n黄焖排骨 22 辣\n【兰州拉面】\n牛肉拉面 15</pre>' +
-      '<div class="field"><textarea id="imp-text" placeholder="把在扫呗外卖小程序里看到的菜单整理后粘贴到这里">' + esc(prefill) + '</textarea></div>' +
-      '<div class="row"><button class="btn" id="imp-cancel">取消</button><button class="btn primary" id="imp-ok">导入</button></div>');
-    $('imp-cancel').onclick = closeSheet;
-    $('imp-ok').onclick = function () {
-      var r = parseImport($('imp-text').value);
-      save(); closeSheet(); render(); toast('新增 ' + r.added + ' 道菜品' + (r.shops ? '、' + r.shops + ' 个店铺' : ''));
+    openSheet('<h2>一键导入</h2>' +
+      '<div class="row" style="margin-bottom:12px"><button class="btn" id="imp-paste">📋 粘贴剪贴板</button>' +
+      '<button class="btn" id="imp-file-btn">📄 从文件</button><input id="imp-file" type="file" accept=".txt,.csv,.md,.json,text/*" hidden></div>' +
+      '<div class="field"><textarea id="imp-text" placeholder="【店铺名】\n菜名 价格\n菜名 价格\n\n也可以：在微信、豆包等 App 里长按文字 →「分享」→ 选「今天吃什么」，直接导入">' + esc(prefill) + '</textarea></div>' +
+      '<div class="preview" id="imp-preview"></div>' +
+      '<label class="check" style="margin:0 0 12px"><input type="checkbox" id="imp-replace">同名店铺：先清空旧菜品，再导入（菜单更新时用）</label>' +
+      '<div class="row"><button class="btn" id="imp-cancel">取消</button><button class="btn primary" id="imp-ok" disabled>导入</button></div>');
+    function refresh() {
+      var g = parseMenu($('imp-text').value), n = countDishes(g);
+      $('imp-preview').innerHTML = n ? '识别到 <b>' + g.length + '</b> 家店、<b>' + n + '</b> 道菜：' + g.map(function (x) { return esc(x.name) + '（' + x.dishes.length + '）'; }).join('、') : '<span class="muted">每家店先写一行【店铺名】，下面每行「菜名 价格」</span>';
+      $('imp-ok').disabled = !n; $('imp-ok').textContent = n ? '导入 ' + n + ' 道' : '导入';
+    }
+    $('imp-text').addEventListener('input', refresh);
+    $('imp-paste').onclick = function () {
+      readClipboard().then(function (t) {
+        if (!t.trim()) { toast('剪贴板是空的'); return; }
+        var ta = $('imp-text'); ta.value = ta.value.trim() ? ta.value.trim() + '\n' + t : t; refresh();
+      });
     };
+    $('imp-file-btn').onclick = function () { $('imp-file').click(); };
+    $('imp-file').onchange = function () {
+      var f = this.files[0]; if (!f) return;
+      var fr = new FileReader();
+      fr.onload = function () {
+        var text = String(fr.result);
+        try {   // 备份文件（JSON）转成文本格式，走同一套导入
+          var d = JSON.parse(text);
+          if (d && Array.isArray(d.shops) && Array.isArray(d.dishes)) {
+            text = d.shops.map(function (s) {
+              return '【' + s.name + '】\n' + d.dishes.filter(function (x) { return x.shopId === s.id; }).map(function (x) { return x.name.replace(/\s+/g, '') + (x.price !== '' && x.price != null ? ' ' + x.price : '') + ((x.tags || []).length ? ' ' + x.tags.join(' ') : ''); }).join('\n');
+            }).join('\n\n');
+          }
+        } catch (e) {}
+        $('imp-text').value = text; refresh();
+      };
+      fr.readAsText(f);
+    };
+    $('imp-cancel').onclick = closeSheet;
+    $('imp-ok').onclick = function () { importDone(applyImport(parseMenu($('imp-text').value), $('imp-replace').checked)); };
+    refresh();
   }
+
+  // 打开 App / 切回 App 时，剪贴板里像是菜单就提示一键导入（同一段内容只提示一次）
+  var CLIP_KEY = 'food_picker_clip', clipGroups = null;
+  function hash(str) { var h = 0; for (var i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) | 0; return String(h); }
+  function checkClipboard() {
+    readClipboard().then(function (t) {
+      t = (t || '').trim();
+      var seen = ''; try { seen = localStorage.getItem(CLIP_KEY) || ''; } catch (e) {}
+      if (!t || hash(t) === seen) return;
+      var g = parseMenu(t), n = countDishes(g);
+      // 至少 3 道菜且有店铺行或价格，才像菜单，避免普通文字误报
+      if (n < 3 || !/【.+?】|\d/.test(t)) return;
+      clipGroups = { text: t, groups: g };
+      $('clip-msg').textContent = '剪贴板里有菜单：' + g.length + ' 家店、' + n + ' 道菜';
+      $('clip-bar').hidden = false;
+    });
+  }
+  function dismissClip() {
+    if (clipGroups) try { localStorage.setItem(CLIP_KEY, hash(clipGroups.text)); } catch (e) {}
+    $('clip-bar').hidden = true;
+  }
+  $('clip-no').onclick = function () { dismissClip(); clipGroups = null; };
+  $('clip-yes').onclick = function () { var c = clipGroups; dismissClip(); if (c) openImport(c.text); };
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) checkClipboard(); });
+
+  // 从别的 App「分享」进来的文字 / 截图
+  window.onShared = function () {
+    var raw = window.Android && Android.takeShared ? Android.takeShared() : null;
+    if (!raw) return;
+    var sh; try { sh = JSON.parse(raw); } catch (e) { return; }
+    if (sh.text) openImport(sh.text);
+    else if (sh.images && sh.images.length) aiSheet(sh.images);
+  };
 
   // ---------- AI 识别菜单图片 ----------
   var AI_KEY = 'food_picker_ai';
@@ -607,7 +768,7 @@
   function loadImages(files) {
     return Promise.all(Array.prototype.map.call(files, function (f) {
       return new Promise(function (res, rej) {
-        var url = URL.createObjectURL(f), img = new Image();
+        var isUrl = typeof f === 'string', url = isUrl ? f : URL.createObjectURL(f), img = new Image();
         img.onload = function () {
           var out = [], w = img.naturalWidth, h = img.naturalHeight;
           var scale = Math.min(1, 1280 / w), sliceH = Math.round(w * 2);
@@ -617,7 +778,8 @@
             cv.getContext('2d').drawImage(img, 0, y, w, sh, 0, 0, cv.width, cv.height);
             out.push(cv.toDataURL('image/jpeg', 0.85));
           }
-          URL.revokeObjectURL(url); res(out);
+          if (!isUrl) URL.revokeObjectURL(url);
+          res(out);
         };
         img.onerror = function () { rej(new Error('图片读取失败')); };
         img.src = url;
@@ -674,8 +836,9 @@
       });
   }
 
-  function aiSheet() {
+  function aiSheet(preload) {
     var c = aiCfg(), images = [];
+    if (preload && !preload.length) preload = null;
     openSheet('<h2>📷 AI 识别菜单</h2>' +
       '<p class="muted">先在「扫呗外卖」小程序里把菜单截图（长截图也行），再从相册选择。AI 会把菜品整理成导入格式，导入前你可以检查修改。</p>' +
       '<div class="muted">当前：' + esc(PROVIDERS[c.provider].name) + ' · ' + esc(c.model) + (c.key ? '' : ' · <b style="color:var(--danger)">未填 API Key</b>') + '</div>' +
@@ -683,24 +846,26 @@
       '<div class="thumbs" id="ai-thumbs"></div>' +
       '<div class="row"><button class="btn" id="ai-set">AI 设置</button><button class="btn primary" id="ai-go" disabled>开始识别</button></div>' +
       '<div class="row" style="margin-top:10px"><button class="btn" id="ai-prompt">没有 Key？复制提示词去豆包/Kimi 用</button></div>');
-    $('ai-set').onclick = function () { aiSettings(aiSheet); };
+    $('ai-set').onclick = function () { aiSettings(function () { aiSheet(); }); };
     $('ai-prompt').onclick = function () {
       copyText(AI_PROMPT);
       toast('已复制。把截图和提示词一起发给任意 AI，再把回答粘贴到「批量导入」');
     };
-    $('ai-files').onchange = function () {
-      var files = this.files;
-      if (!files.length) return;
+    function useFiles(files, autoStart) {
       $('ai-go').disabled = true; $('ai-thumbs').textContent = '处理中…';
       loadImages(files).then(function (list) {
         images = list.slice(0, 20);
         $('ai-thumbs').innerHTML = images.map(function (d) { return '<img src="' + d + '">'; }).join('') +
           (list.length > 20 ? '<div class="muted">图片太多，只取前 20 张</div>' : '');
         $('ai-go').disabled = false;
+        if (autoStart && aiCfg().key) $('ai-go').click();
       }).catch(function (e) { $('ai-thumbs').textContent = e.message; });
-    };
+    }
+    $('ai-files').onchange = function () { if (this.files.length) useFiles(this.files); };
+    if (preload) useFiles(preload, true);
     $('ai-go').onclick = function () {
       if (!aiCfg().key) { toast('请先在「AI 设置」里填写 API Key'); return; }
+      if (!images.length) return;
       var btn = this; btn.disabled = true; btn.innerHTML = '<span class="spin"></span>识别中…';
       recognize(images).then(function (text) {
         openImport(text.trim());
@@ -711,7 +876,7 @@
       });
     };
   }
-  $('btn-ai').onclick = aiSheet;
+  $('btn-ai').onclick = function () { aiSheet(); };
 
   $('btn-backup').onclick = function () {
     openSheet('<h2>备份 / 恢复</h2>' +
@@ -755,6 +920,8 @@
   }
   save();
   render();
+  window.onShared();
+  checkClipboard();
 })();
 </script>
 </body>
