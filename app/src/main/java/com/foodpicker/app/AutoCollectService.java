@@ -33,6 +33,12 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import com.google.mlkit.vision.common.InputImage;
+import com.google.mlkit.vision.text.Text;
+import com.google.mlkit.vision.text.TextRecognition;
+import com.google.mlkit.vision.text.TextRecognizer;
+import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions;
+
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
@@ -82,6 +88,8 @@ public class AutoCollectService extends AccessibilityService {
     private static final Pattern SALES = Pattern.compile("(月售|销量|已售)\\s*\\d+");
     /** 整张店铺卡片被读成一段时（「润园三楼至尊披萨 4.6 销量1022 …」），取评分/销量前面的部分当店名 */
     private static final Pattern BADGE = Pattern.compile("(\\s+(外卖|自取|堂食|到店|自提|新店|品牌))+$");
+    private static final Pattern TAG_ONLY = Pattern.compile("^(外卖|自取|堂食|堂食店|到店|自提|新店|品牌|扫贝专送|专送|快送|准时达|明厨亮灶|无明厨亮灶)$");
+    private static final Pattern HAS_WORD = Pattern.compile("[\\u4e00-\\u9fa5A-Za-z]");
     private static final Pattern CARD_NAME = Pattern.compile("^(.{2,30}?)\\s+(?:[★☆]?\\s*\\d\\.\\d|月售|销量|已售)");
     private static final Pattern RATING = Pattern.compile("^[★☆]?\\s*\\d(\\.\\d)?\\s*分?$");
 
@@ -367,6 +375,102 @@ public class AutoCollectService extends AccessibilityService {
         waitAndReturn();
     }
 
+    // ---------- 读屏：无障碍文字优先，读不到就截图 + 手机本地 OCR ----------
+
+    interface ScreenCallback {
+        /** shot 是截图（用了 OCR 时才有，用完要 recycle），可能为 null */
+        void onScreen(List<TextNode> nodes, Bitmap shot);
+    }
+
+    interface BitmapCallback {
+        void onBitmap(Bitmap bmp);
+    }
+
+    private TextRecognizer recognizer;
+
+    private void readScreen(final ScreenCallback cb) {
+        final List<TextNode> direct = readNodes();
+        if (looksUseful(direct) || !isSupported()) {
+            cb.onScreen(direct, null);
+            return;
+        }
+        screenshot(bmp -> {
+            if (bmp == null) {
+                cb.onScreen(direct, null);
+                return;
+            }
+            ocr(bmp, nodes -> cb.onScreen(nodes, bmp));
+        });
+    }
+
+    /** 无障碍读到的文字里有价格或销量，才算读到了页面内容（否则多半只是微信的外壳按钮） */
+    private static boolean looksUseful(List<TextNode> nodes) {
+        int prices = 0;
+        for (TextNode n : nodes) {
+            if (SALES.matcher(n.text).find()) return true;
+            if (PRICE.matcher(n.text).find() && ++prices >= 2) return true;
+        }
+        return false;
+    }
+
+    @TargetApi(30)
+    private void screenshot(final BitmapCallback cb) {
+        if (panel != null) panel.setAlpha(0f);   // 截图时藏起面板
+        main.postDelayed(() -> takeScreenshot(Display.DEFAULT_DISPLAY, getMainExecutor(), new TakeScreenshotCallback() {
+            @Override
+            public void onSuccess(ScreenshotResult result) {
+                if (panel != null) panel.setAlpha(1f);
+                HardwareBuffer hb = result.getHardwareBuffer();
+                Bitmap hw = Bitmap.wrapHardwareBuffer(hb, result.getColorSpace());
+                Bitmap bmp = hw == null ? null : hw.copy(Bitmap.Config.ARGB_8888, false);
+                if (hw != null) hw.recycle();
+                hb.close();
+                cb.onBitmap(bmp);
+            }
+
+            @Override
+            public void onFailure(int errorCode) {
+                if (panel != null) panel.setAlpha(1f);
+                // 截图有频率限制，稍等重试一次
+                main.postDelayed(() -> screenshot(cb), 500);
+            }
+        }), 150);
+    }
+
+    /** 手机本地 OCR（ML Kit 中文模型，离线、免费）。去掉左侧分类栏，按从上到下、从左到右排好 */
+    private void ocr(Bitmap bmp, final NodesCallback cb) {
+        if (recognizer == null) recognizer = TextRecognition.getClient(new ChineseTextRecognizerOptions.Builder().build());
+        final int leftRail = (int) (bmp.getWidth() * 0.25f);
+        recognizer.process(InputImage.fromBitmap(bmp, 0))
+                .addOnSuccessListener(text -> {
+                    List<TextNode> out = new ArrayList<>();
+                    for (Text.TextBlock b : text.getTextBlocks()) {
+                        for (Text.Line l : b.getLines()) {
+                            Rect r = l.getBoundingBox();
+                            String t = l.getText().replaceAll("\\s+", " ").trim();
+                            if (r == null || t.isEmpty() || r.right < leftRail) continue;
+                            out.add(new TextNode(t, r));
+                        }
+                    }
+                    // 同一行（上下差不到半行高）按 x 排，否则按 y 排
+                    Collections.sort(out, (a, b) -> {
+                        int dy = a.rect.top - b.rect.top;
+                        if (Math.abs(dy) < Math.max(8, Math.min(a.rect.height(), b.rect.height()) / 2)) return a.rect.left - b.rect.left;
+                        return dy;
+                    });
+                    cb.onNodes(out);
+                })
+                .addOnFailureListener(e -> cb.onNodes(new ArrayList<>()));
+    }
+
+    interface NodesCallback {
+        void onNodes(List<TextNode> nodes);
+    }
+
+    private static void recycle(Bitmap b) {
+        if (b != null && !b.isRecycled()) b.recycle();
+    }
+
     // ---------- 逐屏循环 ----------
 
     private void step() {
@@ -376,14 +480,22 @@ public class AutoCollectService extends AccessibilityService {
             main.postDelayed(this::step, 500);
             return;
         }
-        List<String> lines = readScreenText();
-        if (countPrices(lines) >= 2) {
-            onText(lines);
-        } else if (isSupported() && !auto) {
-            capture();
-        } else {
-            endShop(true);
-        }
+        readScreen((nodes, shot) -> {
+            if (!running) {
+                recycle(shot);
+                return;
+            }
+            List<String> lines = texts(nodes);
+            if (countPrices(lines) >= 2) {
+                recycle(shot);
+                onText(lines);
+            } else if (shot != null && !auto) {
+                onImage(shot);   // OCR 也认不出价格：只好把截图交给 AI
+            } else {
+                recycle(shot);
+                endShop(true);
+            }
+        });
     }
 
     /** 文字模式：只取和上一屏不重叠的新行 */
@@ -404,45 +516,12 @@ public class AutoCollectService extends AccessibilityService {
         next();
     }
 
-    @TargetApi(30)
-    private void capture() {
-        if (panel != null) panel.setAlpha(0f);   // 截图时藏起面板
-        main.postDelayed(() -> {
-            if (!running) return;
-            takeScreenshot(Display.DEFAULT_DISPLAY, getMainExecutor(), new TakeScreenshotCallback() {
-                @Override
-                public void onSuccess(ScreenshotResult result) {
-                    if (panel != null) panel.setAlpha(1f);
-                    onShot(result);
-                }
-
-                @Override
-                public void onFailure(int errorCode) {
-                    if (panel != null) panel.setAlpha(1f);
-                    if (running) main.postDelayed(AutoCollectService.this::step, 600);
-                }
-            });
-        }, 150);
-    }
-
-    @TargetApi(30)
-    private void onShot(ScreenshotResult result) {
-        if (!running) return;
-        HardwareBuffer hb = result.getHardwareBuffer();
-        Bitmap hw = Bitmap.wrapHardwareBuffer(hb, result.getColorSpace());
-        if (hw == null) {
-            hb.close();
-            endShop(true);
-            return;
-        }
-        Bitmap bmp = hw.copy(Bitmap.Config.ARGB_8888, false);
-        hw.recycle();
-        hb.close();
+    private void onImage(Bitmap bmp) {
         int[] thumb = thumbOf(bmp);
         boolean same = lastThumb != null && diff(thumb, lastThumb) < 3;
         lastThumb = thumb;
         if (same) {
-            bmp.recycle();
+            recycle(bmp);
             if (++stillCount >= 2) {
                 endShop(true);
                 return;
@@ -452,7 +531,7 @@ public class AutoCollectService extends AccessibilityService {
             shopScreens++;
             usedImages = true;
             pendingImages.add(encode(bmp));
-            bmp.recycle();
+            recycle(bmp);
             if (pendingImages.size() >= perReq) flushImages();
         }
         next();
@@ -495,21 +574,30 @@ public class AutoCollectService extends AccessibilityService {
             main.postDelayed(this::listStep, 800);
             return;
         }
-        List<TextNode> nodes = readNodes();
+        readScreen((nodes, shot) -> {
+            recycle(shot);
+            if (!auto || panel == null || finishing || running) return;
+            onListScreen(nodes);
+        });
+    }
+
+    private void onListScreen(List<TextNode> nodes) {
         if (nodes.isEmpty()) {
-            stopAuto("读不到页面文字（微信没有开放这个页面的文字），只能手动进店后点「采集本店」，会改用截图");
+            stopAuto("截图里也识别不到文字，请确认停在小程序页面上");
             return;
         }
         DisplayMetrics dm = getResources().getDisplayMetrics();
         int top = (int) (dm.heightPixels * 0.12), bottom = (int) (dm.heightPixels * 0.88);
         boolean sawShop = false;
-        for (TextNode n : shopNames(nodes)) {
+        for (TextNode n : shopNames(nodes, dm.widthPixels)) {
             sawShop = true;
             if (visited.contains(n.text) || n.rect.centerY() < top || n.rect.centerY() > bottom) continue;
             visited.add(n.text);
             listStill = 0;
             enterWaits = 0;
             beforeTap = texts(nodes);
+            notice = null;
+            mainBtnText("正在进入：" + n.text);
             tap(n.rect.centerX(), n.rect.centerY());
             main.postDelayed(this::checkEntered, 1500);
             return;
@@ -532,20 +620,28 @@ public class AutoCollectService extends AccessibilityService {
         swipeList();
     }
 
+    private void mainBtnText(String s) {
+        if (mainBtn != null) mainBtn.setText(s);
+    }
+
     /** 点店名后：等页面加载出价格再开始采集；没跳转或不是店铺页就跳过 */
     private void checkEntered() {
         if (!auto || panel == null) return;
-        List<String> lines = readScreenText();
-        if (countPrices(lines) >= 2 && !lines.equals(beforeTap)) {
-            startShop();
-            return;
-        }
-        if (++enterWaits <= 4) {   // 店铺页先出灰色骨架屏，多等一会儿
-            main.postDelayed(this::checkEntered, 800);
-            return;
-        }
-        if (!lines.equals(beforeTap)) performGlobalAction(GLOBAL_ACTION_BACK);   // 进错页面了，退回去
-        main.postDelayed(this::listStep, 1200);
+        readScreen((nodes, shot) -> {
+            recycle(shot);
+            if (!auto || panel == null) return;
+            List<String> lines = texts(nodes);
+            if (countPrices(lines) >= 2 && !lines.equals(beforeTap)) {
+                startShop();
+                return;
+            }
+            if (++enterWaits <= 4) {   // 店铺页先出灰色骨架屏，多等一会儿
+                main.postDelayed(this::checkEntered, 800);
+                return;
+            }
+            if (!lines.equals(beforeTap)) performGlobalAction(GLOBAL_ACTION_BACK);   // 进错页面了，退回去
+            main.postDelayed(this::listStep, 1200);
+        });
     }
 
     private void stopAuto(String msg) {
@@ -558,7 +654,10 @@ public class AutoCollectService extends AccessibilityService {
     /** 自动逐店认不出店铺时，把读到的文字放进剪贴板，方便发给开发者看 */
     private void copyDebug(List<TextNode> nodes) {
         StringBuilder sb = new StringBuilder("【自动逐店调试】读到 ").append(nodes.size()).append(" 段文字：\n");
-        for (int i = 0; i < nodes.size() && i < 200; i++) sb.append(nodes.get(i).text).append('\n');
+        for (int i = 0; i < nodes.size() && i < 200; i++) {
+            TextNode n = nodes.get(i);
+            sb.append(n.text).append("  @").append(n.rect.left).append(',').append(n.rect.top).append('\n');
+        }
         try {
             ClipboardManager cm = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
             cm.setPrimaryClip(ClipData.newPlainText("debug", sb.toString()));
@@ -567,31 +666,46 @@ public class AutoCollectService extends AccessibilityService {
     }
 
     /**
-     * 店名的特征：后面 1~3 段文字内有「销量 123 / 月售 123」，中间可能隔着评分、「外卖」之类的小标签。
-     * 在这几段里跳过评分和价格，取最长的那段当店名。
+     * 认店名。店铺卡片的样子：
+     * <pre>
+     * [logo]  润园三楼至尊披萨              外卖
+     *         ★4.6 销量1022 堂食店 明厨亮灶
+     * </pre>
+     * 所以：找到「销量 123 / 月售 123」，往前几段里找离它最近、在它上面、左边大致对齐的那段文字
+     * （跳过评分、价格、「外卖」这类小标签和 logo 上的字）当店名。
+     * 整张卡片被读成一段时，取评分/销量前面的部分。
      */
-    static List<TextNode> shopNames(List<TextNode> nodes) {
+    static List<TextNode> shopNames(List<TextNode> nodes, int screenWidth) {
         List<TextNode> out = new ArrayList<>();
         Set<String> seen = new HashSet<>();
         for (int i = 0; i < nodes.size(); i++) {
             String cur = nodes.get(i).text;
             if (!SALES.matcher(cur).find()) continue;
             Matcher card = CARD_NAME.matcher(cur);
-            if (card.find()) {   // 整张卡片是一段文字
+            if (card.find()) {
                 String name = BADGE.matcher(card.group(1).trim()).replaceAll("").trim();
-                if (seen.add(name)) out.add(new TextNode(name, nodes.get(i).rect));
-                continue;
+                if (HAS_WORD.matcher(name).find() && !RATING.matcher(name).matches()) {
+                    if (seen.add(name)) out.add(new TextNode(name, nodes.get(i).rect));
+                    continue;
+                }
             }
             TextNode best = null;
             Rect sr = nodes.get(i).rect;
-            int maxGap = Math.max(200, sr.height() * 5);   // 店名就在销量上面一两行
-            for (int j = i - 1; j >= Math.max(0, i - 3); j--) {
-                String t = nodes.get(j).text;
+            int maxGap = Math.max(150, sr.height() * 3);   // 店名就在销量上面一行
+            int slack = Math.max(40, screenWidth * 15 / 100);
+            for (int j = i - 1; j >= Math.max(0, i - 6); j--) {
+                TextNode c = nodes.get(j);
+                String t = c.text;
                 if (RATING.matcher(t).matches() || SALES.matcher(t).find() || PRICE.matcher(t).find()) continue;
-                if (sr.top - nodes.get(j).rect.top > maxGap) continue;
-                if (best == null || t.length() > best.text.length()) best = nodes.get(j);
+                if (!HAS_WORD.matcher(t).find() || TAG_ONLY.matcher(t).matches()) continue;
+                if (c.rect.top > sr.top || sr.top - c.rect.top > maxGap) continue;
+                if (c.rect.left < sr.left - slack || c.rect.left > sr.left + slack) continue;   // logo 上的字在左边，排除
+                if (best == null || c.rect.top > best.rect.top) best = c;   // 取最贴近销量的那行
             }
-            if (best != null && best.text.length() >= 2 && seen.add(best.text)) out.add(best);
+            if (best != null) {
+                String name = BADGE.matcher(best.text).replaceAll("").trim();
+                if (name.length() >= 2 && seen.add(name)) out.add(new TextNode(name, best.rect));
+            }
         }
         return out;
     }
@@ -692,10 +806,6 @@ public class AutoCollectService extends AccessibilityService {
     }
 
     // ---------- 读屏 ----------
-
-    private List<String> readScreenText() {
-        return texts(readNodes());
-    }
 
     /**
      * 读当前屏幕上别的 App 的文字。不能只用 getRootInActiveWindow()：刚点过悬浮面板时，

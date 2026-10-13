@@ -13,6 +13,8 @@ android {
         // CI 传入递增的构建号；版本号只增不减，才能覆盖安装
         versionCode((project.findProperty('buildNumber') ?: '4') as Integer)
         versionName "1.3.${project.findProperty('buildNumber') ?: 'dev'}"
+        // OCR 模型带原生库，只保留手机常见的 ARM 架构，控制 APK 体积
+        ndk { abiFilters 'arm64-v8a', 'armeabi-v7a' }
     }
 
     // 固定签名：每次构建签名一致，新版才能直接覆盖安装旧版
@@ -36,4 +38,9 @@ android {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
+}
+
+dependencies {
+    // 手机本地中文文字识别（离线、免费），微信不开放页面文字时靠它读屏
+    implementation 'com.google.mlkit:text-recognition-chinese:16.0.1'
 }
