@@ -59,6 +59,10 @@
   .hist { display: flex; justify-content: space-between; padding: 10px 0; border-top: 1px solid var(--line); }
   .hist:first-child { border-top: 0; }
   .toast { position: fixed; left: 50%; bottom: 100px; transform: translateX(-50%); background: rgba(0,0,0,.75); color: #fff; padding: 8px 16px; border-radius: 20px; font-size: 14px; display: none; z-index: 20; }
+  .thumbs { display: flex; gap: 6px; flex-wrap: wrap; margin: 10px 0; }
+  .thumbs img { width: 64px; height: 64px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); }
+  .spin { display: inline-block; width: 16px; height: 16px; border: 2px solid #fff; border-right-color: transparent; border-radius: 50%; animation: sp .8s linear infinite; vertical-align: -3px; margin-right: 6px; }
+  @keyframes sp { to { transform: rotate(360deg); } }
   pre.hint { background: #fff8f3; border-radius: 8px; padding: 10px; font-size: 13px; white-space: pre-wrap; margin: 0 0 10px; }
 </style>
 </head>
@@ -95,6 +99,7 @@
   <!-- 菜单 -->
   <section class="page" id="page-menu">
     <div class="toolbar">
+      <button class="btn primary" id="btn-ai">📷 AI 识别菜单</button>
       <button class="btn primary" id="btn-add-dish">＋ 菜品</button>
       <button class="btn" id="btn-add-shop">＋ 店铺</button>
       <button class="btn" id="btn-import">批量导入</button>
@@ -331,8 +336,11 @@
   function parseImport(text) {
     var shop = null, added = 0, shops = 0;
     text.split(/\r?\n/).forEach(function (raw) {
-      var line = raw.trim(); if (!line) return;
-      var m = line.match(/^(?:【(.+?)】|\[(.+?)\]|#\s*(.+)|店铺[:：]\s*(.+))$/);
+      var line = raw.trim();
+      if (!line || /^```/.test(line) || /^\|?[\s:|-]+\|?$/.test(line)) return;
+      line = line.replace(/\*\*|__/g, '').replace(/^(?:[-*+•]|\d+[.、)])\s+/, '').replace(/^\||\|$/g, '').trim();
+      if (!line || /^(菜名|菜品|名称)\s*[|\s]/.test(line)) return;
+      var m = line.match(/^(?:【(.+?)】|\[(.+?)\]|#+\s*(.+)|店铺[:：]\s*(.+))$/);
       if (m) {
         var name = (m[1] || m[2] || m[3] || m[4]).trim();
         shop = data.shops.find(function (s) { return s.name === name; });
@@ -356,17 +364,170 @@
     });
     return { added: added, shops: shops };
   }
-  $('btn-import').onclick = function () {
+  $('btn-import').onclick = function () { openImport(''); };
+  function openImport(prefill) {
     openSheet('<h2>批量导入</h2>' +
       '<pre class="hint">【店铺名】 单独一行表示店铺\n后面每行：菜名 价格 分类标签\n\n例如：\n【老王黄焖鸡】\n黄焖鸡米饭 18 盖饭\n黄焖排骨 22 盖饭 辣\n【兰州拉面】\n牛肉拉面 15 面</pre>' +
-      '<div class="field"><textarea id="imp-text" placeholder="把在扫呗外卖小程序里看到的菜单整理后粘贴到这里"></textarea></div>' +
+      '<div class="field"><textarea id="imp-text" placeholder="把在扫呗外卖小程序里看到的菜单整理后粘贴到这里">' + esc(prefill) + '</textarea></div>' +
       '<div class="row"><button class="btn" id="imp-cancel">取消</button><button class="btn primary" id="imp-ok">导入</button></div>');
     $('imp-cancel').onclick = closeSheet;
     $('imp-ok').onclick = function () {
       var r = parseImport($('imp-text').value);
       save(); closeSheet(); render(); toast('新增 ' + r.added + ' 道菜品' + (r.shops ? '、' + r.shops + ' 个店铺' : ''));
     };
+  }
+
+  // ---------- AI 识别菜单图片 ----------
+  var AI_KEY = 'food_picker_ai';
+  var PROVIDERS = {
+    claude: { name: 'Claude（Anthropic）', fmt: 'anthropic', url: 'https://api.anthropic.com/v1/messages', model: 'claude-opus-5-5', keyHint: 'sk-ant-…，在 console.anthropic.com 获取' },
+    qwen: { name: '通义千问（阿里云百炼）', fmt: 'openai', url: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', model: 'qwen-vl-max', keyHint: 'sk-…，在 bailian.console.aliyun.com 获取' },
+    zhipu: { name: '智谱 GLM（glm-4v-flash 免费）', fmt: 'openai', url: 'https://open.bigmodel.cn/api/paas/v4/chat/completions', model: 'glm-4v-flash', keyHint: '在 open.bigmodel.cn 获取' },
+    custom: { name: '自定义（OpenAI 兼容接口）', fmt: 'openai', url: '', model: '', keyHint: 'Bearer Token' }
   };
+  var AI_PROMPT = '这些图片是外卖小程序的菜单截图或照片。请识别出其中所有的菜品，严格按下面的格式输出纯文本，不要输出任何解释、不要用代码块：\n' +
+    '【店铺名】\n菜名 价格 分类\n\n规则：\n- 第一行是店铺名，用【】括起来；看不出店铺名就写【未命名店铺】；多家店铺就分多段\n' +
+    '- 之后每行一道菜：菜名、价格（只写数字，取实际售价/折后价）、分类（用菜单上的分类，如 招牌、盖饭、饮品；没有可省略），用空格分隔\n' +
+    '- 菜名里不要有空格\n- 同一道菜只写一次；有多个规格时写最常见的那个价格\n- 忽略配送费、满减、包装费等非菜品信息';
+
+  function aiCfg() {
+    var c = {};
+    try { c = JSON.parse(localStorage.getItem(AI_KEY)) || {}; } catch (e) {}
+    c.provider = PROVIDERS[c.provider] ? c.provider : 'zhipu';
+    var p = PROVIDERS[c.provider];
+    return { provider: c.provider, url: c.url || p.url, model: c.model || p.model, key: c.key || '' };
+  }
+
+  function aiSettings(back) {
+    var c = aiCfg();
+    openSheet('<h2>AI 设置</h2>' +
+      '<div class="field"><label>服务商</label><select id="ai-p">' + Object.keys(PROVIDERS).map(function (k) { return '<option value="' + k + '"' + (k === c.provider ? ' selected' : '') + '>' + PROVIDERS[k].name + '</option>'; }).join('') + '</select></div>' +
+      '<div class="field"><label>接口地址</label><input id="ai-url" value="' + esc(c.url) + '"></div>' +
+      '<div class="field"><label>模型（需支持图片）</label><input id="ai-model" value="' + esc(c.model) + '"></div>' +
+      '<div class="field"><label>API Key</label><input id="ai-key" type="password" value="' + esc(c.key) + '" placeholder="' + esc(PROVIDERS[c.provider].keyHint) + '"></div>' +
+      '<p class="muted">Key 只保存在本机。识别时图片会发送给所选的 AI 服务商，按其规则计费。</p>' +
+      '<div class="row"><button class="btn" id="ai-cancel">取消</button><button class="btn primary" id="ai-save">保存</button></div>');
+    $('ai-p').onchange = function () {
+      var p = PROVIDERS[this.value];
+      $('ai-url').value = p.url; $('ai-model').value = p.model; $('ai-key').placeholder = p.keyHint;
+    };
+    $('ai-cancel').onclick = back || closeSheet;
+    $('ai-save').onclick = function () {
+      var v = { provider: $('ai-p').value, url: $('ai-url').value.trim(), model: $('ai-model').value.trim(), key: $('ai-key').value.trim() };
+      try { localStorage.setItem(AI_KEY, JSON.stringify(v)); } catch (e) {}
+      toast('已保存'); (back || closeSheet)();
+    };
+  }
+
+  // 读图并压缩成 JPEG base64；超长截图切成几段，避免被模型缩得看不清
+  function loadImages(files) {
+    return Promise.all(Array.prototype.map.call(files, function (f) {
+      return new Promise(function (res, rej) {
+        var url = URL.createObjectURL(f), img = new Image();
+        img.onload = function () {
+          var out = [], w = img.naturalWidth, h = img.naturalHeight;
+          var scale = Math.min(1, 1280 / w), sliceH = Math.round(w * 2);
+          for (var y = 0; y < h; y += sliceH) {
+            var sh = Math.min(sliceH, h - y), cv = document.createElement('canvas');
+            cv.width = Math.round(w * scale); cv.height = Math.round(sh * scale);
+            cv.getContext('2d').drawImage(img, 0, y, w, sh, 0, 0, cv.width, cv.height);
+            out.push(cv.toDataURL('image/jpeg', 0.85));
+          }
+          URL.revokeObjectURL(url); res(out);
+        };
+        img.onerror = function () { rej(new Error('图片读取失败')); };
+        img.src = url;
+      });
+    })).then(function (lists) { return [].concat.apply([], lists); });
+  }
+
+  var httpSeq = 0, httpWait = {};
+  window.__httpCb = function (id, status, body) { var cb = httpWait[id]; delete httpWait[id]; if (cb) cb(status, body); };
+  function httpPost(url, headers, body) {
+    return new Promise(function (res, rej) {
+      var done = function (status, text) {
+        if (!status) return rej(new Error('网络错误：' + text));
+        var j = null; try { j = JSON.parse(text); } catch (e) {}
+        if (status >= 400) return rej(new Error('HTTP ' + status + '：' + ((j && j.error && (j.error.message || j.error)) || text).toString().slice(0, 300)));
+        if (!j) return rej(new Error('返回内容无法解析'));
+        res(j);
+      };
+      if (window.Android && Android.post) {
+        var id = 'h' + (++httpSeq); httpWait[id] = done;
+        Android.post(id, url, JSON.stringify(headers), JSON.stringify(body));
+      } else {
+        fetch(url, { method: 'POST', headers: headers, body: JSON.stringify(body) })
+          .then(function (r) { return r.text().then(function (t) { done(r.status, t); }); })
+          .catch(function (e) { done(0, e.message); });
+      }
+    });
+  }
+
+  function recognize(images) {
+    var c = aiCfg(), fmt = PROVIDERS[c.provider].fmt;
+    if (fmt === 'anthropic') {
+      var content = images.map(function (d) { return { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: d.split(',')[1] } }; });
+      content.push({ type: 'text', text: AI_PROMPT });
+      return httpPost(c.url, {
+        'content-type': 'application/json', 'x-api-key': c.key, 'anthropic-version': '2023-06-01',
+        'anthropic-beta': 'server-side-fallback-2026-07-01'
+      }, { model: c.model, max_tokens: 16000, fallbacks: 'default', messages: [{ role: 'user', content: content }] })
+        .then(function (j) {
+          if (j.stop_reason === 'refusal') throw new Error('模型拒绝了这次请求，请换张图片再试');
+          return (j.content || []).filter(function (b) { return b.type === 'text'; }).map(function (b) { return b.text; }).join('\n');
+        });
+    }
+    var parts = images.map(function (d) { return { type: 'image_url', image_url: { url: d } }; });
+    parts.push({ type: 'text', text: AI_PROMPT });
+    return httpPost(c.url, { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + c.key },
+      { model: c.model, messages: [{ role: 'user', content: parts }] })
+      .then(function (j) {
+        var m = j.choices && j.choices[0] && j.choices[0].message;
+        var t = m && m.content;
+        if (Array.isArray(t)) t = t.map(function (x) { return x.text || ''; }).join('\n');
+        if (!t) throw new Error('模型没有返回内容');
+        return t;
+      });
+  }
+
+  function aiSheet() {
+    var c = aiCfg(), images = [];
+    openSheet('<h2>📷 AI 识别菜单</h2>' +
+      '<p class="muted">先在「扫呗外卖」小程序里把菜单截图（长截图也行），再从相册选择。AI 会把菜品整理成导入格式，导入前你可以检查修改。</p>' +
+      '<div class="muted">当前：' + esc(PROVIDERS[c.provider].name) + ' · ' + esc(c.model) + (c.key ? '' : ' · <b style="color:var(--danger)">未填 API Key</b>') + '</div>' +
+      '<input id="ai-files" type="file" accept="image/*" multiple style="margin-top:10px">' +
+      '<div class="thumbs" id="ai-thumbs"></div>' +
+      '<div class="row"><button class="btn" id="ai-set">AI 设置</button><button class="btn primary" id="ai-go" disabled>开始识别</button></div>' +
+      '<div class="row" style="margin-top:10px"><button class="btn" id="ai-prompt">没有 Key？复制提示词去豆包/Kimi 用</button></div>');
+    $('ai-set').onclick = function () { aiSettings(aiSheet); };
+    $('ai-prompt').onclick = function () {
+      copyText(AI_PROMPT);
+      toast('已复制。把截图和提示词一起发给任意 AI，再把回答粘贴到「批量导入」');
+    };
+    $('ai-files').onchange = function () {
+      var files = this.files;
+      if (!files.length) return;
+      $('ai-go').disabled = true; $('ai-thumbs').textContent = '处理中…';
+      loadImages(files).then(function (list) {
+        images = list.slice(0, 20);
+        $('ai-thumbs').innerHTML = images.map(function (d) { return '<img src="' + d + '">'; }).join('') +
+          (list.length > 20 ? '<div class="muted">图片太多，只取前 20 张</div>' : '');
+        $('ai-go').disabled = false;
+      }).catch(function (e) { $('ai-thumbs').textContent = e.message; });
+    };
+    $('ai-go').onclick = function () {
+      if (!aiCfg().key) { toast('请先在「AI 设置」里填写 API Key'); return; }
+      var btn = this; btn.disabled = true; btn.innerHTML = '<span class="spin"></span>识别中…';
+      recognize(images).then(function (text) {
+        openImport(text.trim());
+        toast('识别完成，检查无误后点「导入」');
+      }).catch(function (e) {
+        btn.disabled = false; btn.textContent = '开始识别';
+        alert('识别失败：' + e.message);
+      });
+    };
+  }
+  $('btn-ai').onclick = aiSheet;
 
   $('btn-backup').onclick = function () {
     openSheet('<h2>备份 / 恢复</h2>' +
