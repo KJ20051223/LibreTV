@@ -98,7 +98,30 @@ jobs:
           cat "openGym-$VER.apk.sha256"
           echo "file=openGym-$VER.apk" >> "$GITHUB_OUTPUT"
           echo "sha=$(cut -d' ' -f1 "openGym-$VER.apk.sha256")" >> "$GITHUB_OUTPUT"
+          echo "size=$(stat -c %s "openGym-$VER.apk")" >> "$GITHUB_OUTPUT"
+          echo "ver=$VER" >> "$GITHUB_OUTPUT"
           echo "commit=$(git -C upstream rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      # 精简版：去掉内置的动作示范动画/图片（约 200 MB），只有二十多 MB，下载、安装更稳。
+      # 动作处显示占位方块，其他功能不变。（媒体版权方不允许从上游 CDN 外链，所以不做在线加载。）
+      - name: Build lite APK (no exercise media)
+        if: steps.ver.outputs.skip != 'true'
+        id: lite
+        run: |
+          set -eu
+          VER="${{ steps.sign.outputs.ver }}"
+          rm -rf upstream/frontend/android/app/src/main/assets/public/exercise-media
+          (cd upstream/frontend/android && ./gradlew --no-daemon assembleRelease)
+          BT="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+          "$BT/zipalign" -f -p 4 upstream/frontend/android/app/build/outputs/apk/release/app-release-unsigned.apk aligned-lite.apk
+          "$BT/apksigner" sign --ks opengym/opengym.keystore --ks-pass pass:opengym \
+            --ks-key-alias opengym --key-pass pass:opengym --out "openGym-$VER-lite.apk" aligned-lite.apk
+          "$BT/apksigner" verify "openGym-$VER-lite.apk"
+          sha256sum "openGym-$VER-lite.apk" > "openGym-$VER-lite.apk.sha256"
+          cat "openGym-$VER-lite.apk.sha256"
+          echo "file=openGym-$VER-lite.apk" >> "$GITHUB_OUTPUT"
+          echo "sha=$(cut -d' ' -f1 "openGym-$VER-lite.apk.sha256")" >> "$GITHUB_OUTPUT"
+          echo "size=$(stat -c %s "openGym-$VER-lite.apk")" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v4
         if: steps.ver.outputs.skip != 'true'
@@ -116,10 +139,18 @@ jobs:
           files: |
             ${{ steps.sign.outputs.file }}
             ${{ steps.sign.outputs.file }}.sha256
+            ${{ steps.lite.outputs.file }}
+            ${{ steps.lite.outputs.file }}.sha256
           body: |
             openGym ${{ steps.ver.outputs.tag }} 安卓版，由本仓库 GitHub Actions 从上游源码自动构建。
 
+            | 文件 | 说明 | 大小（字节） | SHA-256 |
+            |---|---|---|---|
+            | `${{ steps.sign.outputs.file }}` | 完整版，内置全部动作示范动画 | ${{ steps.sign.outputs.size }} | `${{ steps.sign.outputs.sha }}` |
+            | `${{ steps.lite.outputs.file }}` | 精简版，不含动作动画（显示占位方块），其他功能相同 | ${{ steps.lite.outputs.size }} | `${{ steps.lite.outputs.sha }}` |
+
+            安装提示「软件包无效 / 缺乏开发者证书」多半是下载不完整或损坏：对比文件大小（字节数）是否与上表一致，不一致就关掉 VPN 重新下载，或先装精简版。
+
             - 上游项目：https://github.com/DuarteSantos8/openGym （AGPL-3.0，源码见上游 `${{ steps.ver.outputs.tag }}` 标签，提交 `${{ steps.sign.outputs.commit }}`）
             - 构建方式与上游 CI 的 `build:apk` 相同（移动版：数据只存在手机上，不连服务器、不登录、不同步）
-            - SHA-256：`${{ steps.sign.outputs.sha }}`
             - 签名与上游官方 APK 不同：如果手机上装过官方版，需要先卸载才能安装这个版本
