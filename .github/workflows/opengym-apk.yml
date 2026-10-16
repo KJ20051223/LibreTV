@@ -99,16 +99,18 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew --no-daemon assembleRelease
-          # 所有原生库都必须按 16 KB 对齐，否则新手机装不上
+          # 64 位原生库都必须按 16 KB 对齐，否则 16 KB 内存页的新手机装不上
+          # （16 KB 页只存在于 64 位系统，32 位的 armeabi-v7a 库不受影响）
           APK=app/build/outputs/apk/release/app-release-unsigned.apk
           rm -rf /tmp/so && mkdir -p /tmp/so && unzip -q -o "$APK" 'lib/*' -d /tmp/so
           bad=0
-          for f in /tmp/so/lib/*/*.so; do
+          for f in /tmp/so/lib/arm64-v8a/*.so /tmp/so/lib/x86_64/*.so; do
+            [ -f "$f" ] || continue
             for a in $(readelf -lW "$f" | awk '/LOAD/{print $NF}'); do
               if [ $((a)) -lt 16384 ]; then echo "NOT 16KB aligned: $f ($a)"; bad=1; fi
             done
           done
-          [ "$bad" = 0 ] && echo "all native libs are 16 KB aligned"
+          [ "$bad" = 0 ] && echo "all 64-bit native libs are 16 KB aligned"
           exit $bad
 
       - name: Sign APK
