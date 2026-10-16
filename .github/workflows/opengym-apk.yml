@@ -75,12 +75,41 @@ jobs:
           npm ci
           npm run build:mobile
 
+      # 扫码插件默认用 CameraX 1.1.0，它的 libimage_processing_util_jni.so 只按 4 KB 对齐，
+      # 在 16 KB 内存页的新手机（Android 15+ 部分机型、Android 17）上装不上/加载失败。
+      # 插件允许用 rootProject.ext 覆盖版本，这里换成已 16 KB 对齐的 1.4.2。
+      - name: Use 16 KB-aligned CameraX
+        if: steps.ver.outputs.skip != 'true'
+        working-directory: upstream/frontend/android
+        run: |
+          cat >> variables.gradle <<'GRADLE'
+
+          ext {
+              androidxCameraCamera2Version = '1.4.2'
+              androidxCameraCoreVersion = '1.4.2'
+              androidxCameraLifecycleVersion = '1.4.2'
+              androidxCameraViewVersion = '1.4.2'
+          }
+          GRADLE
+          tail -8 variables.gradle
+
       - name: Build APK
         if: steps.ver.outputs.skip != 'true'
         working-directory: upstream/frontend/android
         run: |
           chmod +x gradlew
           ./gradlew --no-daemon assembleRelease
+          # 所有原生库都必须按 16 KB 对齐，否则新手机装不上
+          APK=app/build/outputs/apk/release/app-release-unsigned.apk
+          rm -rf /tmp/so && mkdir -p /tmp/so && unzip -q -o "$APK" 'lib/*' -d /tmp/so
+          bad=0
+          for f in /tmp/so/lib/*/*.so; do
+            for a in $(readelf -lW "$f" | awk '/LOAD/{print $NF}'); do
+              if [ $((a)) -lt 16384 ]; then echo "NOT 16KB aligned: $f ($a)"; bad=1; fi
+            done
+          done
+          [ "$bad" = 0 ] && echo "all native libs are 16 KB aligned"
+          exit $bad
 
       - name: Sign APK
         if: steps.ver.outputs.skip != 'true'
@@ -149,7 +178,9 @@ jobs:
             | `${{ steps.sign.outputs.file }}` | 完整版，内置全部动作示范动画 | ${{ steps.sign.outputs.size }} | `${{ steps.sign.outputs.sha }}` |
             | `${{ steps.lite.outputs.file }}` | 精简版，不含动作动画（显示占位方块），其他功能相同 | ${{ steps.lite.outputs.size }} | `${{ steps.lite.outputs.sha }}` |
 
-            安装提示「软件包无效 / 缺乏开发者证书」多半是下载不完整或损坏：对比文件大小（字节数）是否与上表一致，不一致就关掉 VPN 重新下载，或先装精简版。
+            已修复：原生库全部按 16 KB 对齐（升级 CameraX 到 1.4.2），可以在 16 KB 内存页的新手机 / Android 17 上安装。
+
+            安装提示「软件包无效 / 缺乏开发者证书」也可能是下载不完整或损坏：对比文件大小（字节数）是否与上表一致，不一致就关掉 VPN 重新下载，或先装精简版。
 
             - 上游项目：https://github.com/DuarteSantos8/openGym （AGPL-3.0，源码见上游 `${{ steps.ver.outputs.tag }}` 标签，提交 `${{ steps.sign.outputs.commit }}`）
             - 构建方式与上游 CI 的 `build:apk` 相同（移动版：数据只存在手机上，不连服务器、不登录、不同步）
