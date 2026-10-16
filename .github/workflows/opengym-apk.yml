@@ -1,0 +1,125 @@
+name: Build openGym APK
+
+# 从 DuarteSantos8/openGym 的最新正式版源码构建安卓 APK，发布到本仓库的 Releases。
+# 构建步骤照搬上游 .gitlab-ci.yml 里的 build:apk：npm ci → npm run build:mobile → gradlew assembleRelease → 签名。
+
+on:
+  push:
+    paths:
+      - .github/workflows/opengym-apk.yml
+      - opengym/**
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 要构建的 openGym 版本标签（如 v1.4.1），留空 = 最新正式版
+        required: false
+  schedule:
+    - cron: '17 3 * * *'   # 每天检查一次上游有没有新版（只在默认分支上生效）
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Find openGym version
+        id: ver
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          set -eu
+          TAG="${INPUT_TAG:-}"
+          if [ -z "$TAG" ]; then
+            TAG=$(git ls-remote --tags --refs https://github.com/DuarteSantos8/openGym 'v*' \
+              | sed 's#.*refs/tags/##' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+          fi
+          [ -n "$TAG" ] || { echo "找不到 openGym 的版本标签" >&2; exit 1; }
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "openGym $TAG"
+          # 定时任务：这个版本已经发布过就不再重复构建
+          if [ "${{ github.event_name }}" = "schedule" ] && gh release view "opengym-$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "opengym-$TAG 已发布，跳过"
+          fi
+
+      - name: Check out openGym ${{ steps.ver.outputs.tag }}
+        if: steps.ver.outputs.skip != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: DuarteSantos8/openGym
+          ref: ${{ steps.ver.outputs.tag }}
+          path: upstream
+
+      - uses: actions/setup-node@v4
+        if: steps.ver.outputs.skip != 'true'
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: upstream/frontend/package-lock.json
+
+      - uses: actions/setup-java@v4
+        if: steps.ver.outputs.skip != 'true'
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Build web bundle (mobile flavor)
+        if: steps.ver.outputs.skip != 'true'
+        working-directory: upstream/frontend
+        run: |
+          npm ci
+          npm run build:mobile
+
+      - name: Build APK
+        if: steps.ver.outputs.skip != 'true'
+        working-directory: upstream/frontend/android
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleRelease
+
+      - name: Sign APK
+        if: steps.ver.outputs.skip != 'true'
+        id: sign
+        run: |
+          set -eu
+          VER="$(node -p "require('./upstream/frontend/package.json').version")"
+          BT="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+          UNSIGNED=upstream/frontend/android/app/build/outputs/apk/release/app-release-unsigned.apk
+          "$BT/zipalign" -f -p 4 "$UNSIGNED" aligned.apk
+          "$BT/apksigner" sign --ks opengym/opengym.keystore --ks-pass pass:opengym \
+            --ks-key-alias opengym --key-pass pass:opengym --out "openGym-$VER.apk" aligned.apk
+          "$BT/apksigner" verify --print-certs "openGym-$VER.apk"
+          sha256sum "openGym-$VER.apk" > "openGym-$VER.apk.sha256"
+          cat "openGym-$VER.apk.sha256"
+          echo "file=openGym-$VER.apk" >> "$GITHUB_OUTPUT"
+          echo "sha=$(cut -d' ' -f1 "openGym-$VER.apk.sha256")" >> "$GITHUB_OUTPUT"
+          echo "commit=$(git -C upstream rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        if: steps.ver.outputs.skip != 'true'
+        with:
+          name: openGym-apk
+          path: openGym-*.apk*
+
+      - name: Publish release
+        if: steps.ver.outputs.skip != 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: opengym-${{ steps.ver.outputs.tag }}
+          name: openGym ${{ steps.ver.outputs.tag }}（安卓 APK）
+          make_latest: false
+          files: |
+            ${{ steps.sign.outputs.file }}
+            ${{ steps.sign.outputs.file }}.sha256
+          body: |
+            openGym ${{ steps.ver.outputs.tag }} 安卓版，由本仓库 GitHub Actions 从上游源码自动构建。
+
+            - 上游项目：https://github.com/DuarteSantos8/openGym （AGPL-3.0，源码见上游 `${{ steps.ver.outputs.tag }}` 标签，提交 `${{ steps.sign.outputs.commit }}`）
+            - 构建方式与上游 CI 的 `build:apk` 相同（移动版：数据只存在手机上，不连服务器、不登录、不同步）
+            - SHA-256：`${{ steps.sign.outputs.sha }}`
+            - 签名与上游官方 APK 不同：如果手机上装过官方版，需要先卸载才能安装这个版本
